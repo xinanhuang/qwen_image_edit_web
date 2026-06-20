@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Qwen Image Edit</title>
+    <style>
+        :root {
+            --bg: #0f0f13;
+            --surface: #1a1a24;
+            --surface2: #24243a;
+            --border: #2e2e48;
+            --text: #e8e8f0;
+            --text2: #9898b0;
+            --accent: #7c6aef;
+            --accent2: #9d8fff;
+            --success: #4ade80;
+            --error: #f87171;
+            --radius: 14px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 16px;
+            padding-bottom: 40px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 20px 0 16px;
+            position: relative;
+        }
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .header p {
+            color: var(--text2);
+            font-size: 0.85rem;
+            margin-top: 4px;
+        }
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 10px;
+            font-size: 0.78rem;
+            color: var(--text2);
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--text2);
+            transition: background 0.3s;
+        }
+        .status-dot.loaded { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-dot.loading { background: #fbbf24; animation: pulse 1s infinite; }
+
+        /* Language Toggle (bottom of page) */
+        .lang-toggle {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .lang-btn {
+            padding: 5px 12px;
+            font-size: 0.78rem;
+            color: var(--text2);
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .lang-btn.active {
+            background: var(--accent);
+            color: white;
+        }
+        .lang-btn:hover:not(.active) {
+            background: var(--surface2);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Drop Zone */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 32px 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.25s;
+            background: var(--surface);
+            position: relative;
+            overflow: hidden;
+            min-height: 160px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent);
+            background: var(--surface2);
+        }
+        .drop-zone.has-image {
+            padding: 12px;
+            min-height: auto;
+        }
+        .drop-icon {
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+        }
+        .drop-text {
+            color: var(--text2);
+            font-size: 0.9rem;
+        }
+        .drop-text strong {
+            color: var(--accent2);
+        }
+        .preview-img {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 10px;
+            object-fit: contain;
+        }
+        .preview-overlay {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border-radius: 50%;
+            width: 32px; height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1.1rem;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .drop-zone:hover .preview-overlay { opacity: 1; }
+        #file-input { display: none; }
+
+        /* Prompt */
+        .prompt-section {
+            margin-top: 16px;
+        }
+        .prompt-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text2);
+            margin-bottom: 6px;
+            display: block;
+        }
+        .prompt-area {
+            width: 100%;
+            min-height: 80px;
+            max-height: 160px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 0.95rem;
+            padding: 12px 14px;
+            resize: vertical;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        .prompt-area:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .prompt-area::placeholder { color: var(--text2); opacity: 0.6; }
+
+        /* Negative Prompt */
+        .neg-prompt-toggle {
+            font-size: 0.8rem;
+            color: var(--accent2);
+            cursor: pointer;
+            margin-top: 8px;
+            display: inline-block;
+        }
+        .neg-prompt-wrap {
+            margin-top: 8px;
+            display: none;
+        }
+        .neg-prompt-wrap.visible { display: block; }
+        .neg-prompt-area {
+            width: 100%;
+            min-height: 44px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 0.85rem;
+            padding: 10px 12px;
+            resize: vertical;
+            font-family: inherit;
+        }
+        .neg-prompt-area:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Advanced Settings */
+        .advanced-toggle {
+            font-size: 0.8rem;
+            color: var(--accent2);
+            cursor: pointer;
+            margin-top: 12px;
+            display: inline-block;
+        }
+        .advanced-wrap {
+            margin-top: 10px;
+            display: none;
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 14px;
+        }
+        .advanced-wrap.visible { display: block; }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .setting-row:last-child { margin-bottom: 0; }
+        .setting-label {
+            font-size: 0.82rem;
+            color: var(--text2);
+        }
+        .setting-input {
+            width: 90px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.82rem;
+            padding: 6px 10px;
+            text-align: center;
+        }
+        .setting-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 44px;
+            height: 24px;
+            cursor: pointer;
+        }
+        .toggle-slider {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            transition: 0.3s;
+        }
+        .toggle-slider:before {
+            content: "";
+            position: absolute;
+            height: 18px;
+            width: 18px;
+            left: 2px;
+            bottom: 2px;
+            background: var(--text);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Generate Button */
+        .btn-generate {
+            width: 100%;
+            margin-top: 18px;
+            padding: 14px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .btn-generate:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(124,106,239,0.4); }
+        .btn-generate:active { transform: translateY(0); }
+        .btn-generate:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Progress */
+        .progress-wrap {
+            margin-top: 16px;
+            display: none;
+        }
+        .progress-wrap.visible { display: block; }
+        .progress-bar-bg {
+            height: 8px;
+            background: var(--surface2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-bar-fill.indeterminate {
+            animation: indeterminate 1.5s infinite;
+        }
+        @keyframes indeterminate {
+            0% { width: 0%; margin-left: 0; }
+            50% { width: 60%; margin-left: 20%; }
+            100% { width: 0%; margin-left: 100%; }
+        }
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 8px;
+        }
+        .progress-text {
+            font-size: 0.8rem;
+            color: var(--text2);
+            text-align: center;
+        }
+        .progress-percent {
+            font-size: 0.78rem;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* Result */
+        .result-section {
+            margin-top: 20px;
+            display: none;
+        }
+        .result-section.visible { display: block; }
+        .result-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .result-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+        .result-meta {
+            font-size: 0.78rem;
+            color: var(--text2);
+        }
+        .result-image-wrap {
+            background: var(--surface);
+            border-radius: var(--radius);
+            overflow: hidden;
+            text-align: center;
+        }
+        .result-image {
+            max-width: 100%;
+            min-height: 100px;
+            display: block;
+            margin: 0 auto;
+            border-radius: var(--radius);
+        }
+        .result-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .btn-action {
+            flex: 1;
+            padding: 10px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .btn-action:hover { border-color: var(--accent); }
+
+        /* Error */
+        .error-msg {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(248,113,113,0.1);
+            border: 1px solid rgba(248,113,113,0.3);
+            border-radius: 10px;
+            color: var(--error);
+            font-size: 0.85rem;
+            display: none;
+        }
+        .error-msg.visible { display: block; }
+
+        /* Prompt Examples */
+        .examples {
+            margin-top: 20px;
+        }
+        .examples-title {
+            font-size: 0.82rem;
+            color: var(--text2);
+            margin-bottom: 8px;
+        }
+        .example-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .example-chip {
+            padding: 6px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text2);
+            font-size: 0.78rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .example-chip:hover {
+            border-color: var(--accent);
+            color: var(--accent2);
+        }
+
+        /* Spinner */
+        .spinner {
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Responsive */
+        @media (min-width: 640px) {
+            body { padding: 24px; }
+            .container { max-width: 560px; }
+            .header h1 { font-size: 1.8rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1 data-i18n="title">✦ Qwen Image Edit</h1>
+            <p data-i18n="subtitle">Upload an image, describe the edit, and let AI do the rest</p>
+            <div class="status-bar">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text" data-i18n="status_checking">Checking server...</span>
+            </div>
+        </div>
+
+        <!-- Image Upload -->
+        <div class="drop-zone" id="drop-zone">
+            <div class="drop-icon">🖼️</div>
+            <div class="drop-text">
+                <strong data-i18n="upload_tap">Tap to upload</strong> <span data-i18n="upload_or">or drag &amp; drop</span><br>
+                <span style="font-size:0.8rem;opacity:0.7" data-i18n="upload_formats">PNG, JPG, WEBP supported</span>
+            </div>
+            <img class="preview-img" id="preview-img" style="display:none">
+            <div class="preview-overlay" id="remove-btn" style="display:none" title="Remove image">✕</div>
+            <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/gif">
+        </div>
+
+        <!-- Prompt -->
+        <div class="prompt-section">
+            <label class="prompt-label" data-i18n="prompt_label">Edit Prompt</label>
+            <textarea class="prompt-area" id="prompt" data-i18n-placeholder="prompt_placeholder" placeholder="Describe how you want to edit the image...&#10;e.g. Change the background to a sunset beach scene"></textarea>
+        </div>
+
+        <!-- Negative Prompt -->
+        <span class="neg-prompt-toggle" id="neg-toggle" data-i18n="neg_prompt_toggle">+ Negative Prompt</span>
+        <div class="neg-prompt-wrap" id="neg-wrap">
+            <textarea class="neg-prompt-area" id="neg-prompt" data-i18n-placeholder="neg_prompt_placeholder" placeholder="Things to avoid... (e.g. blurry, low quality)"></textarea>
+        </div>
+
+        <!-- Advanced Settings -->
+        <span class="advanced-toggle" id="adv-toggle" data-i18n="adv_toggle">⚙ Advanced Settings</span>
+        <div class="advanced-wrap" id="adv-wrap">
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_steps">Inference Steps</span>
+                <input type="number" class="setting-input" id="steps" value="4" min="1" max="100">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_guidance">Guidance Scale</span>
+                <input type="number" class="setting-input" id="guidance" value="1.0" min="0.1" max="10" step="0.1">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_cfg">True CFG Scale</span>
+                <input type="number" class="setting-input" id="true_cfg" value="1.0" min="1" max="10" step="0.5">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_seed">Seed</span>
+                <input type="number" class="setting-input" id="seed" value="42" min="0" max="999999">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_num_images">Num Images</span>
+                <input type="number" class="setting-input" id="num_images" value="1" min="1" max="4">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_lightning">⚡ Lightning (4-step)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="use_lightning" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Generate Button -->
+        <button class="btn-generate" id="btn-generate">
+            <span id="btn-text" data-i18n="btn_generate">✨ Generate Edit</span>
+            <div class="spinner" id="btn-spinner" style="display:none"></div>
+        </button>
+
+        <!-- Progress -->
+        <div class="progress-wrap" id="progress-wrap">
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            </div>
+            <div class="progress-info">
+                <div class="progress-text" id="progress-text" data-i18n="progress_text">Processing... this may take 30-90s on first run</div>
+                <div class="progress-percent" id="progress-percent"></div>
+            </div>
+        </div>
+
+        <!-- Error -->
+        <div class="error-msg" id="error-msg"></div>
+
+        <!-- Result -->
+        <div class="result-section" id="result-section">
+            <div class="result-header">
+                <span class="result-title" data-i18n="result_title">Result</span>
+                <span class="result-meta" id="result-meta"></span>
+            </div>
+            <div class="result-image-wrap">
+                <img class="result-image" id="result-image">
+            </div>
+            <div class="result-actions">
+                <button class="btn-action" id="btn-download" data-i18n="btn_download">💾 Download</button>
+                <button class="btn-action" id="btn-new" data-i18n="btn_new">🔄 New Edit</button>
+            </div>
+        </div>
+
+        <!-- Prompt Examples -->
+        <div class="examples">
+            <div class="examples-title" data-i18n="examples_title">Try these prompts:</div>
+            <div class="example-chips" id="example-chips">
+                <span class="example-chip" data-prompt="Change the background to a beautiful sunset beach" data-prompt-zh="将背景改为美丽的日落海滩">🌅 <span data-i18n="chip_sunset">Sunset beach</span></span>
+                <span class="example-chip" data-prompt="Turn into a watercolor painting style" data-prompt-zh="转换为水彩画风格">🎨 <span data-i18n="chip_watercolor">Watercolor</span></span>
+                <span class="example-chip" data-prompt="Add snow and make it a winter scene" data-prompt-zh="添加雪景，变成冬季场景">❄️ <span data-i18n="chip_winter">Winter scene</span></span>
+                <span class="example-chip" data-prompt="Convert to cyberpunk neon city style" data-prompt-zh="转换为赛博朋克霓虹城市风格">🌃 <span data-i18n="chip_cyberpunk">Cyberpunk</span></span>
+                <span class="example-chip" data-prompt="Make it look like an oil painting" data-prompt-zh="让它看起来像油画">🖌️ <span data-i18n="chip_oil">Oil painting</span></span>
+                <span class="example-chip" data-prompt="Add a dramatic storm sky" data-prompt-zh="添加戏剧性的风暴天空">⛈️ <span data-i18n="chip_storm">Storm sky</span></span>
+                <span class="example-chip" data-prompt="Transform into anime art style" data-prompt-zh="转换为动漫艺术风格">🎌 <span data-i18n="chip_anime">Anime style</span></span>
+                <span class="example-chip" data-prompt="Make it a vintage retro photograph" data-prompt-zh="让它变成复古怀旧照片">📷 <span data-i18n="chip_vintage">Vintage retro</span></span>
+            </div>
+        </div>
+
+        <!-- Language Selection -->
+        <div class="lang-toggle">
+            <button class="lang-btn active" data-lang="en">EN</button>
+            <button class="lang-btn" data-lang="zh">中文</button>
+        </div>
+    </div>
+
+    <script>
+        // ==================== i18n ====================
+        const i18n = {
+            en: {
+                title: "✦ Qwen Image Edit",
+                subtitle: "Upload an image, describe the edit, and let AI do the rest",
+                status_checking: "Checking server...",
+                status_ready: (gpu, mem) => 'Model ready • ' + gpu + (mem ? ' (' + mem + 'GB)' : ''),
+                status_loading: "Model loading on first request...",
+                status_connecting: "Connecting to server...",
+                upload_tap: "Tap to upload",
+                upload_or: "or drag & drop",
+                upload_formats: "PNG, JPG, WEBP supported",
+                prompt_label: "Edit Prompt",
+                prompt_placeholder: "Describe how you want to edit the image...\ne.g. Change the background to a sunset beach scene",
+                neg_prompt_toggle: "+ Negative Prompt",
+                neg_prompt_open: "− Negative Prompt",
+                neg_prompt_placeholder: "Things to avoid... (e.g. blurry, low quality)",
+                adv_toggle: "⚙ Advanced Settings",
+                setting_steps: "Inference Steps",
+                setting_guidance: "Guidance Scale",
+                setting_cfg: "True CFG Scale",
+                setting_seed: "Seed",
+                setting_num_images: "Num Images",
+                setting_lightning: "⚡ Lightning (4-step)",
+                btn_generate: "✨ Generate Edit",
+                btn_generating: "Generating...",
+                progress_text: "Processing... this may take 30-90s on first run",
+                progress_done: (t) => 'Done in ' + t + 's!',
+                result_title: "Result",
+                result_meta: (t, s) => t + 's • Seed: ' + s,
+                btn_download: "💾 Download",
+                btn_new: "🔄 New Edit",
+                examples_title: "Try these prompts:",
+                chip_sunset: "Sunset beach",
+                chip_watercolor: "Watercolor",
+                chip_winter: "Winter scene",
+                chip_cyberpunk: "Cyberpunk",
+                chip_oil: "Oil painting",
+                chip_storm: "Storm sky",
+                chip_anime: "Anime style",
+                chip_vintage: "Vintage retro",
+                err_no_image: "Please upload an image first.",
+                err_no_prompt: "Please enter an edit prompt.",
+                err_network: (m) => 'Network error: ' + m,
+                err_failed: "Generation failed",
+            },
+            zh: {
+                title: "✦ Qwen 图像编辑",
+                subtitle: "上传一张图片，描述编辑效果，让 AI 帮你完成",
+                status_checking: "正在检查服务器...",
+                status_ready: (gpu, mem) => '模型就绪 • ' + gpu + (mem ? ' (' + mem + 'GB)' : ''),
+                status_loading: "首次请求时将加载模型...",
+                status_connecting: "正在连接服务器...",
+                upload_tap: "点击上传",
+                upload_or: "或拖放图片",
+                upload_formats: "支持 PNG、JPG、WEBP",
+                prompt_label: "编辑提示词",
+                prompt_placeholder: "描述你想要的编辑效果...\n例如：将背景改为日落海滩场景",
+                neg_prompt_toggle: "+ 反向提示词",
+                neg_prompt_open: "− 反向提示词",
+                neg_prompt_placeholder: "需要避免的内容...（例如：模糊、低质量）",
+                adv_toggle: "⚙ 高级设置",
+                setting_steps: "推理步数",
+                setting_guidance: "引导系数",
+                setting_cfg: "True CFG 系数",
+                setting_seed: "随机种子",
+                setting_num_images: "生成数量",
+                setting_lightning: "⚡ Lightning (4步加速)",
+                btn_generate: "✨ 开始编辑",
+                btn_generating: "生成中...",
+                progress_text: "处理中... 首次运行可能需要 30-90 秒",
+                progress_done: (t) => t + ' 秒完成！',
+                result_title: "生成结果",
+                result_meta: (t, s) => t + ' 秒 • 种子: ' + s,
+                btn_download: "💾 下载图片",
+                btn_new: "🔄 再次编辑",
+                examples_title: "试试这些提示词：",
+                chip_sunset: "日落海滩",
+                chip_watercolor: "水彩画",
+                chip_winter: "冬季雪景",
+                chip_cyberpunk: "赛博朋克",
+                chip_oil: "油画风格",
+                chip_storm: "风暴天空",
+                chip_anime: "动漫风格",
+                chip_vintage: "复古照片",
+                err_no_image: "请先上传一张图片。",
+                err_no_prompt: "请输入编辑提示词。",
+                err_network: (m) => '网络错误: ' + m,
+                err_failed: "生成失败",
+            }
+        };
+
+        let currentLang = localStorage.getItem('qwen_lang') || 'en';
+
+        function t(key, ...args) {
+            const val = i18n[currentLang][key] || i18n.en[key] || key;
+            return typeof val === 'function' ? val(...args) : val;
+        }
+
+        function applyLang() {
+            // Text content
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                const val = t(key);
+                if (typeof val === 'string') el.textContent = val;
+            });
+
+            // Placeholders
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                el.placeholder = t(key);
+            });
+
+            // Lang buttons
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.lang === currentLang);
+            });
+
+            // Neg prompt toggle
+            const negWrap = document.getElementById('neg-wrap');
+            const negToggle = document.getElementById('neg-toggle');
+            negToggle.textContent = negWrap.classList.contains('visible')
+                ? t('neg_prompt_open') : t('neg_prompt_toggle');
+
+            // Update button text if not generating
+            const btnText = document.getElementById('btn-text');
+            if (btnText.textContent !== t('btn_generating')) {
+                btnText.textContent = t('btn_generate');
+            }
+
+            // Progress text
+            const progressText = document.getElementById('progress-text');
+            if (progressText.textContent !== t('progress_done', '')) {
+                progressText.textContent = t('progress_text');
+            }
+
+            localStorage.setItem('qwen_lang', currentLang);
+        }
+
+        // Language toggle
+        document.querySelectorAll('.lang-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentLang = btn.dataset.lang;
+                applyLang();
+            });
+        });
+
+        // ==================== App Logic ====================
+
+        // State
+        let selectedFile = null;
+        let selectedImageData = null;
+        let isGenerating = false;
+
+        // Elements
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const previewImg = document.getElementById('preview-img');
+        const removeBtn = document.getElementById('remove-btn');
+        const promptEl = document.getElementById('prompt');
+        const negToggle = document.getElementById('neg-toggle');
+        const negWrap = document.getElementById('neg-wrap');
+        const negPrompt = document.getElementById('neg-prompt');
+        const advToggle = document.getElementById('adv-toggle');
+        const advWrap = document.getElementById('adv-wrap');
+        const btnGenerate = document.getElementById('btn-generate');
+        const btnText = document.getElementById('btn-text');
+        const btnSpinner = document.getElementById('btn-spinner');
+        const progressWrap = document.getElementById('progress-wrap');
+        const progressText = document.getElementById('progress-text');
+        const progressBarFill = document.getElementById('progress-bar-fill');
+        const progressPercent = document.getElementById('progress-percent');
+        let jobResult = null;
+        const errorMsg = document.getElementById('error-msg');
+        const resultSection = document.getElementById('result-section');
+        const resultImage = document.getElementById('result-image');
+        const resultMeta = document.getElementById('result-meta');
+        const btnDownload = document.getElementById('btn-download');
+        const btnNew = document.getElementById('btn-new');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+
+        // Check server status
+        async function checkStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                if (data.model_loaded) {
+                    statusDot.className = 'status-dot loaded';
+                    statusText.textContent = t('status_ready', data.gpu_name || 'GPU', data.gpu_memory ? data.gpu_memory + 'GB' : '');
+                } else {
+                    statusDot.className = 'status-dot';
+                    statusText.textContent = t('status_loading');
+                }
+            } catch {
+                statusDot.className = 'status-dot';
+                statusText.textContent = t('status_connecting');
+            }
+        }
+        checkStatus();
+        setInterval(checkStatus, 5000);
+
+        // Lightning toggle: auto-adjust steps & cfg
+        const lightningToggle = document.getElementById('use_lightning');
+        const stepsInput = document.getElementById('steps');
+        const cfgInput = document.getElementById('true_cfg');
+        lightningToggle.addEventListener('change', () => {
+            if (lightningToggle.checked) {
+                stepsInput.value = 4;
+                cfgInput.value = 1.0;
+            } else {
+                stepsInput.value = 20;
+                cfgInput.value = 2.5;
+            }
+        });
+
+        // Drop Zone Events
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length) handleFile(files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        removeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearImage();
+        });
+
+        // Handle file selection
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) return;
+            selectedFile = file;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                selectedImageData = e.target.result;
+                previewImg.src = selectedImageData;
+                previewImg.style.display = 'block';
+                dropZone.querySelector('.drop-icon').style.display = 'none';
+                dropZone.querySelector('.drop-text').style.display = 'none';
+                removeBtn.style.display = 'flex';
+                dropZone.classList.add('has-image');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearImage() {
+            selectedFile = null;
+            selectedImageData = null;
+            previewImg.style.display = 'none';
+            previewImg.src = '';
+            removeBtn.style.display = 'none';
+            dropZone.querySelector('.drop-icon').style.display = '';
+            dropZone.querySelector('.drop-text').style.display = '';
+            dropZone.classList.remove('has-image');
+            fileInput.value = '';
+        }
+
+        // Toggles
+        negToggle.addEventListener('click', () => {
+            negWrap.classList.toggle('visible');
+            negToggle.textContent = negWrap.classList.contains('visible') ? t('neg_prompt_open') : t('neg_prompt_toggle');
+        });
+
+        advToggle.addEventListener('click', () => {
+            advWrap.classList.toggle('visible');
+        });
+
+        // Example chips
+        document.querySelectorAll('.example-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                promptEl.value = currentLang === 'zh' ? chip.dataset.promptZh : chip.dataset.prompt;
+                promptEl.focus();
+            });
+        });
+
+        // Poll progress from server
+        async function pollProgress(clientId) {
+            const pollInterval = 500; // ms
+            const maxWait = 600; // seconds (10 min)
+            const startTime = Date.now();
+            
+            while ((Date.now() - startTime) / 1000 < maxWait) {
+                try {
+                    const res = await fetch('/api/progress/' + clientId);
+                    const prog = await res.json();
+                    
+                    // Update progress bar
+                    if (prog.percent !== undefined && prog.percent > 0) {
+                        progressBarFill.style.width = prog.percent + '%';
+                        progressBarFill.classList.remove('indeterminate');
+                        progressPercent.textContent = Math.round(prog.percent) + '%';
+                    }
+                    if (prog.message) {
+                        progressText.textContent = prog.message;
+                    }
+                    
+                    // Check if complete
+                    if (prog.status === 'complete' && prog.result) {
+                        jobResult = prog.result;
+                        progressBarFill.style.width = '100%';
+                        progressBarFill.classList.remove('indeterminate');
+                        progressPercent.textContent = '100%';
+                        return;
+                    }
+                    if (prog.status === 'error') {
+                        jobResult = prog.result || { success: false, error: prog.message };
+                        return;
+                    }
+                } catch (e) {
+                    console.log('Progress poll error:', e);
+                }
+                
+                await new Promise(r => setTimeout(r, pollInterval));
+            }
+            
+            // Timeout
+            jobResult = { success: false, error: 'Timeout' };
+        }
+
+        // Generate
+        btnGenerate.addEventListener('click', generate);
+
+        async function generate() {
+            if (isGenerating) return;
+
+            const prompt = promptEl.value.trim();
+            if (!selectedImageData) {
+                showError(t('err_no_image'));
+                return;
+            }
+            if (!prompt) {
+                showError(t('err_no_prompt'));
+                return;
+            }
+
+            isGenerating = true;
+            hideError();
+            resultSection.classList.remove('visible');
+
+            // UI updates
+            btnGenerate.disabled = true;
+            btnText.textContent = t('btn_generating');
+            btnSpinner.style.display = 'block';
+            progressWrap.classList.add('visible');
+            progressText.textContent = t('progress_text');
+            progressBarFill.style.width = '0%';
+            progressBarFill.classList.add('indeterminate');
+            progressPercent.textContent = '';
+
+            const formData = new FormData();
+            formData.append('image_base64', selectedImageData);
+            formData.append('prompt', prompt);
+            if (negPrompt.value.trim()) formData.append('negative_prompt', negPrompt.value.trim());
+            formData.append('num_inference_steps', document.getElementById('steps').value);
+            formData.append('guidance_scale', document.getElementById('guidance').value);
+            formData.append('true_cfg_scale', document.getElementById('true_cfg').value);
+            formData.append('seed', document.getElementById('seed').value);
+            formData.append('num_images', document.getElementById('num_images').value);
+            formData.append('use_lightning', document.getElementById('use_lightning').checked);
+
+            try {
+                const startTime = Date.now();
+                const res = await fetch('/api/edit', { method: 'POST', body: formData });
+                const submitData = await res.json();
+                const clientId = submitData.client_id;
+
+                // Poll for progress
+                await pollProgress(clientId);
+
+                const data = jobResult;
+                if (data && data.success) {
+                    const elapsed = data.elapsed || ((Date.now() - startTime) / 1000).toFixed(1);
+                    console.log('Result received:', data);
+                    console.log('Image count:', data.images?.length);
+                    console.log('Image src length:', data.images?.[0]?.length);
+                    resultImage.src = data.images[0];
+                    resultMeta.textContent = t('result_meta', elapsed, document.getElementById('seed').value);
+                    resultSection.classList.add('visible');
+                    progressText.textContent = t('progress_done', elapsed);
+
+                    // Scroll to result
+                    resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else {
+                    showError((data && data.error) || t('err_failed'));
+                }
+            } catch (err) {
+                showError(t('err_network', err.message));
+            } finally {
+                isGenerating = false;
+                btnGenerate.disabled = false;
+                btnText.textContent = t('btn_generate');
+                btnSpinner.style.display = 'none';
+                setTimeout(() => progressWrap.classList.remove('visible'), 2000);
+            }
+        }
+
+        // Download
+        btnDownload.addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.href = resultImage.src;
+            link.download = 'qwen-edit-' + Date.now() + '.png';
+            link.click();
+        });
+
+        // New Edit
+        btnNew.addEventListener('click', () => {
+            resultSection.classList.remove('visible');
+            promptEl.value = '';
+            promptEl.focus();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        // Helpers
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorMsg.classList.add('visible');
+        }
+        function hideError() {
+            errorMsg.classList.remove('visible');
+        }
+
+        // Apply initial language
+        applyLang();
+    </script>
+</body>
+</html>

@@ -1,0 +1,1964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Qwen Image Edit</title>
+    <style>
+        :root {
+            --bg: #0f0f13;
+            --surface: #1a1a24;
+            --surface2: #24243a;
+            --border: #2e2e48;
+            --text: #e8e8f0;
+            --text2: #9898b0;
+            --accent: #7c6aef;
+            --accent2: #9d8fff;
+            --success: #4ade80;
+            --error: #f87171;
+            --radius: 14px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 16px;
+            padding-bottom: 40px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 20px 0 16px;
+            position: relative;
+        }
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .header p {
+            color: var(--text2);
+            font-size: 0.85rem;
+            margin-top: 4px;
+        }
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 10px;
+            font-size: 0.78rem;
+            color: var(--text2);
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--text2);
+            transition: background 0.3s;
+        }
+        .status-dot.loaded { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-dot.loading { background: #fbbf24; animation: pulse 1s infinite; }
+
+        /* Task Active Banner */
+        .task-banner {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 1000;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 20px;
+            text-align: center;
+            font-size: 14px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        .task-banner.visible {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        .task-banner button {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.4);
+            color: white;
+            padding: 6px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .task-banner button:hover { background: rgba(255,255,255,0.3); }
+        .task-banner .spinner-sm {
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        /* Language Toggle */
+        .lang-toggle {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .lang-btn {
+            padding: 5px 12px;
+            font-size: 0.78rem;
+            color: var(--text2);
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .lang-btn.active { background: var(--accent); color: white; }
+        .lang-btn:hover:not(.active) { background: var(--surface2); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Drop Zone */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 32px 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.25s;
+            background: var(--surface);
+            position: relative;
+            overflow: hidden;
+            min-height: 160px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent);
+            background: var(--surface2);
+        }
+        .drop-zone.has-image {
+            padding: 12px;
+            min-height: auto;
+        }
+        .drop-icon { font-size: 2.2rem; margin-bottom: 8px; }
+        .drop-text { color: var(--text2); font-size: 0.9rem; }
+        .drop-text strong { color: var(--accent2); }
+        .preview-img {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 10px;
+            object-fit: contain;
+        }
+        .preview-overlay {
+            position: absolute;
+            top: 8px; right: 8px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border-radius: 50%;
+            width: 32px; height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1.1rem;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .drop-zone:hover .preview-overlay { opacity: 1; }
+        #file-input { display: none; }
+
+        /* Prompt */
+        .prompt-section { margin-top: 16px; }
+        .prompt-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text2);
+            margin-bottom: 6px;
+            display: block;
+        }
+        .prompt-area {
+            width: 100%;
+            min-height: 80px;
+            max-height: 160px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 0.95rem;
+            padding: 12px 14px;
+            resize: vertical;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        .prompt-area:focus { outline: none; border-color: var(--accent); }
+        .prompt-area::placeholder { color: var(--text2); opacity: 0.6; }
+
+        /* Negative Prompt */
+        .neg-prompt-toggle {
+            font-size: 0.8rem;
+            color: var(--accent2);
+            cursor: pointer;
+            margin-top: 8px;
+            display: inline-block;
+        }
+        .neg-prompt-wrap { margin-top: 8px; display: none; }
+        .neg-prompt-wrap.visible { display: block; }
+        .neg-prompt-area {
+            width: 100%;
+            min-height: 44px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 0.85rem;
+            padding: 10px 12px;
+            resize: vertical;
+            font-family: inherit;
+        }
+        .neg-prompt-area:focus { outline: none; border-color: var(--accent); }
+
+        /* Advanced Settings */
+        .advanced-toggle {
+            font-size: 0.8rem;
+            color: var(--accent2);
+            cursor: pointer;
+            margin-top: 12px;
+            display: inline-block;
+        }
+        .advanced-wrap {
+            margin-top: 10px;
+            display: none;
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 14px;
+        }
+        .advanced-wrap.visible { display: block; }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .setting-row:last-child { margin-bottom: 0; }
+        .setting-label { font-size: 0.82rem; color: var(--text2); }
+        .setting-input {
+            width: 90px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.82rem;
+            padding: 6px 10px;
+            text-align: center;
+        }
+        .setting-input:focus { outline: none; border-color: var(--accent); }
+        .toggle-switch { position: relative; width: 44px; height: 24px; }
+        .toggle-switch input { opacity: 0; width: 44px; height: 24px; cursor: pointer; }
+        .toggle-slider {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            transition: 0.3s;
+        }
+        .toggle-slider:before {
+            content: "";
+            position: absolute;
+            height: 18px; width: 18px;
+            left: 2px; bottom: 2px;
+            background: var(--text);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Generate Button */
+        .btn-generate {
+            width: 100%;
+            margin-top: 18px;
+            padding: 14px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .btn-generate:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(124,106,239,0.4); }
+        .btn-generate:active { transform: translateY(0); }
+        .btn-generate:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        /* Progress */
+        .progress-wrap { margin-top: 16px; display: none; }
+        .progress-wrap.visible { display: block; }
+        .progress-bar-bg {
+            height: 8px;
+            background: var(--surface2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-bar-fill.indeterminate { animation: indeterminate 1.5s infinite; }
+        @keyframes indeterminate {
+            0% { width: 0%; margin-left: 0; }
+            50% { width: 60%; margin-left: 20%; }
+            100% { width: 0%; margin-left: 100%; }
+        }
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 8px;
+        }
+        .progress-text {
+            font-size: 0.8rem;
+            color: var(--text2);
+            text-align: center;
+        }
+        .progress-percent {
+            font-size: 0.78rem;
+            color: var(--accent);
+            font-weight: 600;
+        }
+        .btn-cancel-inline {
+            padding: 5px 14px;
+            background: rgba(248,113,113,0.15);
+            border: 1px solid rgba(248,113,113,0.4);
+            border-radius: 8px;
+            color: var(--error);
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: none;
+        }
+        .btn-cancel-inline.visible { display: inline-block; }
+        .btn-cancel-inline:hover { background: rgba(248,113,113,0.25); }
+
+        /* Queue Status */
+        .queue-status {
+            margin-top: 12px;
+            display: none;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px 14px;
+        }
+        .queue-status.visible { display: block; }
+        .queue-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+        .queue-header .spinner-sm {
+            width: 14px; height: 14px;
+            border: 2px solid rgba(124,106,239,0.3);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .queue-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 0.78rem;
+            color: var(--text2);
+        }
+        .queue-row .label { opacity: 0.7; }
+        .queue-row .value { font-weight: 600; color: var(--accent2); }
+        .queue-row .value.eta { color: var(--success); }
+        .queue-list {
+            margin-top: 8px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .queue-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 8px;
+            background: var(--surface2);
+            border-radius: 6px;
+            margin-bottom: 4px;
+            font-size: 0.75rem;
+            color: var(--text2);
+        }
+        .queue-item.active { border-left: 3px solid var(--accent); }
+        .queue-item.me { border-left: 3px solid var(--success); }
+        .queue-item .pos { font-weight: 700; color: var(--accent); min-width: 18px; }
+        .queue-item .prompt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+        .queue-item .pct { color: var(--success); min-width: 36px; text-align: right; }
+
+        /* Result */
+        .result-section { margin-top: 20px; display: none; }
+        .result-section.visible { display: block; }
+        .result-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .result-title { font-size: 0.95rem; font-weight: 600; }
+        .result-meta { font-size: 0.78rem; color: var(--text2); }
+        .result-image-wrap {
+            background: var(--surface);
+            border-radius: var(--radius);
+            overflow: hidden;
+            text-align: center;
+        }
+        .result-image {
+            max-width: 100%;
+            min-height: 100px;
+            display: block;
+            margin: 0 auto;
+            border-radius: var(--radius);
+        }
+        .result-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .btn-action {
+            flex: 1;
+            padding: 10px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .btn-action:hover { border-color: var(--accent); }
+
+        /* Error */
+        .error-msg {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(248,113,113,0.1);
+            border: 1px solid rgba(248,113,113,0.3);
+            border-radius: 10px;
+            color: var(--error);
+            font-size: 0.85rem;
+            display: none;
+        }
+        .error-msg.visible { display: block; }
+
+        /* Prompt Examples */
+        .examples { margin-top: 20px; }
+        .examples-title {
+            font-size: 0.82rem;
+            color: var(--text2);
+            margin-bottom: 8px;
+        }
+        .example-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .example-chip {
+            padding: 6px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text2);
+            font-size: 0.78rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .example-chip:hover { border-color: var(--accent); color: var(--accent2); }
+
+        /* Spinner */
+        .spinner {
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ==================== History / Queue Tabs ==================== */
+        .history-tabs {
+            margin-top: 20px;
+            display: flex;
+            gap: 0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+        .history-tab {
+            flex: 1;
+            padding: 10px 12px;
+            text-align: center;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text2);
+            cursor: pointer;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+        }
+        .history-tab:hover { color: var(--text); background: var(--surface2); }
+        .history-tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            background: var(--surface2);
+        }
+
+        .history-panel {
+            margin-top: 10px;
+            display: none;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .history-panel.visible { display: block; }
+
+        .history-item {
+            display: flex;
+            gap: 10px;
+            padding: 10px;
+            background: var(--surface2);
+            border-radius: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+        .history-item:hover { border-color: var(--accent); }
+        .history-item .hi-thumb {
+            width: 56px; height: 56px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: var(--bg);
+            flex-shrink: 0;
+        }
+        .history-item .hi-info { flex: 1; min-width: 0; }
+        .history-item .hi-prompt.masked { color: var(--accent); letter-spacing: 2px; user-select: none; }
+        .history-item .hi-prompt {
+            font-size: 0.8rem;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-bottom: 4px;
+        }
+        .history-item .hi-meta {
+            font-size: 0.72rem;
+            color: var(--text2);
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .history-item .hi-status {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        .hi-status.complete { background: rgba(74,222,128,0.15); color: var(--success); }
+        .hi-status.error { background: rgba(248,113,113,0.15); color: var(--error); }
+        .hi-status.queued, .hi-status.running { background: rgba(124,106,239,0.15); color: var(--accent); }
+
+        .history-empty {
+            text-align: center;
+            color: var(--text2);
+            font-size: 0.82rem;
+            padding: 30px 10px;
+        }
+
+        /* History Detail Modal */
+        .history-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .history-modal-overlay.visible { display: flex; }
+        .history-modal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            max-width: 520px;
+            width: 100%;
+            max-height: 80vh;
+            overflow-y: auto;
+            position: relative;
+        }
+        .history-modal .hm-close {
+            position: absolute;
+            top: 10px; right: 14px;
+            font-size: 1.2rem;
+            color: var(--text2);
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+        .history-modal .hm-close:hover { color: var(--text); }
+        .hm-section { margin-bottom: 14px; }
+        .hm-section h4 {
+            font-size: 0.82rem;
+            color: var(--accent2);
+            margin-bottom: 6px;
+        }
+        .hm-section p.blurred { filter: blur(4px); user-select: none; }
+        .hm-section p {
+            font-size: 0.82rem;
+            color: var(--text);
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        .hm-section .hm-setting-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+        .hm-section .hm-setting-item {
+            font-size: 0.78rem;
+            color: var(--text2);
+            background: var(--surface2);
+            padding: 6px 10px;
+            border-radius: 6px;
+        }
+        .hm-section .hm-setting-item span { color: var(--text); font-weight: 600; }
+        .hm-result-img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin-top: 6px;
+        }
+        .hm-input-img {
+            max-width: 120px;
+            border-radius: 8px;
+            margin-top: 6px;
+        }
+
+        /* Resume Choice Dialog */
+        .resume-dialog-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .resume-dialog-overlay.visible { display: flex; }
+        .resume-dialog {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        .resume-dialog h3 {
+            font-size: 1rem;
+            margin-bottom: 10px;
+            color: var(--text);
+        }
+        .resume-dialog p {
+            font-size: 0.82rem;
+            color: var(--text2);
+            margin-bottom: 18px;
+        }
+        .resume-dialog .rd-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .resume-dialog .rd-btn {
+            flex: 1;
+            padding: 10px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+        .rd-btn-cancel {
+            background: rgba(248,113,113,0.15);
+            border-color: rgba(248,113,113,0.4);
+            color: var(--error);
+        }
+        .rd-btn-cancel:hover { background: rgba(248,113,113,0.25); }
+        .rd-btn-resume {
+            background: rgba(74,222,128,0.15);
+            border-color: rgba(74,222,128,0.4);
+            color: var(--success);
+        }
+        .rd-btn-resume:hover { background: rgba(74,222,128,0.25); }
+
+        /* Responsive */
+        @media (min-width: 640px) {
+            body { padding: 24px; }
+            .container { max-width: 560px; }
+            .header h1 { font-size: 1.8rem; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Task Active Banner -->
+    <div class="task-banner" id="taskBanner">
+        <div class="spinner-sm"></div>
+        <span id="taskBannerText">Task running in background...</span>
+        <button id="btnResumePoll">Resume</button>
+        <button id="btnCancelJob">Cancel</button>
+    </div>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1 data-i18n="title">✦ Qwen Image Edit</h1>
+            <p data-i18n="subtitle">Upload an image, describe the edit, and let AI do the rest</p>
+            <div class="status-bar">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text" data-i18n="status_checking">Checking server...</span>
+            </div>
+        </div>
+
+        <!-- Image Upload -->
+        <div class="drop-zone" id="drop-zone">
+            <div class="drop-icon">🖼️</div>
+            <div class="drop-text">
+                <strong data-i18n="upload_tap">Tap to upload</strong> <span data-i18n="upload_or">or drag &amp; drop</span><br>
+                <span style="font-size:0.8rem;opacity:0.7" data-i18n="upload_formats">PNG, JPG, WEBP, HEIC, HEIF, DNG, TIFF, BMP</span>
+            </div>
+            <img class="preview-img" id="preview-img" style="display:none">
+            <div class="preview-overlay" id="remove-btn" style="display:none" title="Remove image">✕</div>
+            <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,image/tiff,image/bmp,.heic,.heif,.dng,.tif,.tiff,.bmp">
+        </div>
+
+        <!-- Prompt -->
+        <div class="prompt-section">
+            <label class="prompt-label" data-i18n="prompt_label">Edit Prompt</label>
+            <textarea class="prompt-area" id="prompt" data-i18n-placeholder="prompt_placeholder" placeholder="Describe how you want to edit the image...&#10;e.g. Change the background to a sunset beach scene"></textarea>
+        </div>
+
+        <!-- Negative Prompt -->
+        <span class="neg-prompt-toggle" id="neg-toggle" data-i18n="neg_prompt_toggle">+ Negative Prompt</span>
+        <div class="neg-prompt-wrap" id="neg-wrap">
+            <textarea class="neg-prompt-area" id="neg-prompt" data-i18n-placeholder="neg_prompt_placeholder" placeholder="Things to avoid... (e.g. blurry, low quality)"></textarea>
+        </div>
+
+        <!-- Advanced Settings -->
+        <span class="advanced-toggle" id="adv-toggle" data-i18n="adv_toggle">⚙ Advanced Settings</span>
+        <div class="advanced-wrap" id="adv-wrap">
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_steps">Inference Steps</span>
+                <input type="number" class="setting-input" id="steps" value="4" min="1" max="100">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_guidance">Guidance Scale</span>
+                <input type="number" class="setting-input" id="guidance" value="1.0" min="0.1" max="10" step="0.1">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_cfg">True CFG Scale</span>
+                <input type="number" class="setting-input" id="true_cfg" value="1.0" min="1" max="10" step="0.5">
+            </div>
+            <div class="setting-row" style="gap:6px">
+                <span class="setting-label" data-i18n="setting_seed">Seed</span>
+                <input type="number" class="setting-input" id="seed" value="0" min="0" max="999999999" style="flex:1">
+                <button type="button" id="btn-rng-seed" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:0.9rem;cursor:pointer;flex-shrink:0" title="Random seed">🎲</button>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_num_images">Num Images</span>
+                <input type="number" class="setting-input" id="num_images" value="1" min="1" max="4">
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_lightning">⚡ Lightning (4-step)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="use_lightning" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Generate Button -->
+        <button class="btn-generate" id="btn-generate">
+            <span id="btn-text" data-i18n="btn_generate">✨ Generate Edit</span>
+            <div class="spinner" id="btn-spinner" style="display:none"></div>
+        </button>
+
+        <!-- Progress -->
+        <div class="progress-wrap" id="progress-wrap">
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            </div>
+            <div class="progress-info">
+                <div class="progress-text" id="progress-text" data-i18n="progress_text">Processing...</div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <div class="progress-percent" id="progress-percent"></div>
+                    <button class="btn-cancel-inline" id="btn-cancel-inline">✕ Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Queue Status -->
+        <div class="queue-status" id="queue-status">
+            <div class="queue-header">
+                <div class="spinner-sm"></div>
+                <span data-i18n="queue_title">Queue Status</span>
+            </div>
+            <div class="queue-row">
+                <span class="label" data-i18n="queue_ahead">Jobs ahead</span>
+                <span class="value" id="queue-ahead">0</span>
+            </div>
+            <div class="queue-row">
+                <span class="label" data-i18n="queue_eta">Est. wait</span>
+                <span class="value eta" id="queue-eta">0s</span>
+            </div>
+            <div class="queue-row">
+                <span class="label" data-i18n="queue_total">Total queued</span>
+                <span class="value" id="queue-total">0</span>
+            </div>
+            <div class="queue-row">
+                <span class="label" data-i18n="queue_pos">Your position</span>
+                <span class="value" id="queue-pos">—</span>
+            </div>
+            <div class="queue-list" id="queue-list"></div>
+        </div>
+
+        <!-- Error -->
+        <div class="error-msg" id="error-msg"></div>
+
+        <!-- Result -->
+        <div class="result-section" id="result-section">
+            <div class="result-header">
+                <span class="result-title" data-i18n="result_title">Result</span>
+                <span class="result-meta" id="result-meta"></span>
+            </div>
+            <div class="result-image-wrap">
+                <img class="result-image" id="result-image">
+            </div>
+            <div class="result-actions">
+                <button class="btn-action" id="btn-download" data-i18n="btn_download">💾 Download</button>
+                <button class="btn-action" id="btn-new" data-i18n="btn_new">🔄 New Edit</button>
+            </div>
+        </div>
+
+        <!-- Prompt Examples -->
+        <div class="examples">
+            <div class="examples-title" data-i18n="examples_title">Try these prompts:</div>
+            <div class="example-chips" id="example-chips">
+                <span class="example-chip" data-prompt="Change the background to a beautiful sunset beach" data-prompt-zh="将背景改为美丽的日落海滩">🌅 <span data-i18n="chip_sunset">Sunset beach</span></span>
+                <span class="example-chip" data-prompt="Turn into a watercolor painting style" data-prompt-zh="转换为水彩画风格">🎨 <span data-i18n="chip_watercolor">Watercolor</span></span>
+                <span class="example-chip" data-prompt="Add snow and make it a winter scene" data-prompt-zh="添加雪景，变成冬季场景">❄️ <span data-i18n="chip_winter">Winter scene</span></span>
+                <span class="example-chip" data-prompt="Convert to cyberpunk neon city style" data-prompt-zh="转换为赛博朋克霓虹城市风格">🌃 <span data-i18n="chip_cyberpunk">Cyberpunk</span></span>
+                <span class="example-chip" data-prompt="Make it look like an oil painting" data-prompt-zh="让它看起来像油画">🖌️ <span data-i18n="chip_oil">Oil painting</span></span>
+                <span class="example-chip" data-prompt="Add a dramatic storm sky" data-prompt-zh="添加戏剧性的风暴天空">⛈️ <span data-i18n="chip_storm">Storm sky</span></span>
+                <span class="example-chip" data-prompt="Transform into anime art style" data-prompt-zh="转换为动漫艺术风格">🎌 <span data-i18n="chip_anime">Anime style</span></span>
+                <span class="example-chip" data-prompt="Make it a vintage retro photograph" data-prompt-zh="让它变成复古怀旧照片">📷 <span data-i18n="chip_vintage">Vintage retro</span></span>
+            </div>
+        </div>
+
+        <!-- ==================== History / Queue Tabs ==================== -->
+        <div class="history-tabs">
+            <div class="history-tab active" data-panel="panel-queue" data-i18n="tab_queue">📋 Queue</div>
+            <div class="history-tab" data-panel="panel-my-history" data-i18n="tab_my_history">🕐 My History</div>
+            <div class="history-tab" data-panel="panel-all-history" data-i18n="tab_all_history">🌐 All Jobs</div>
+        </div>
+
+        <!-- Queue Panel -->
+        <div class="history-panel visible" id="panel-queue">
+            <div id="queue-panel-content">
+                <div class="queue-row">
+                    <span class="label" data-i18n="queue_ahead">Jobs ahead</span>
+                    <span class="value" id="qp-ahead">0</span>
+                </div>
+                <div class="queue-row">
+                    <span class="label" data-i18n="queue_eta">Est. wait</span>
+                    <span class="value eta" id="qp-eta">—</span>
+                </div>
+                <div class="queue-row">
+                    <span class="label" data-i18n="queue_total">Total queued</span>
+                    <span class="value" id="qp-total">0</span>
+                </div>
+                <div class="queue-list" id="qp-list" style="margin-top:10px"></div>
+            </div>
+        </div>
+
+        <!-- My History Panel -->
+        <div class="history-panel" id="panel-my-history">
+            <div id="my-history-content">
+                <div class="history-empty" data-i18n="history_loading">Loading your history...</div>
+            </div>
+        </div>
+
+        <!-- All History Panel -->
+        <div class="history-panel" id="panel-all-history">
+            <div id="all-history-content">
+                <div class="history-empty" data-i18n="history_loading">Loading all jobs...</div>
+            </div>
+        </div>
+
+        <!-- Language Selection -->
+        <div class="lang-toggle">
+            <button class="lang-btn active" data-lang="en">EN</button>
+            <button class="lang-btn" data-lang="zh">中文</button>
+        </div>
+    </div>
+
+    <!-- Resume Choice Dialog -->
+    <div class="resume-dialog-overlay" id="resume-dialog-overlay">
+        <div class="resume-dialog">
+            <h3 id="rd-title"></h3>
+            <p id="rd-msg"></p>
+            <div class="rd-actions">
+                <button class="rd-btn rd-btn-cancel" id="rd-btn-cancel-new"></button>
+                <button class="rd-btn rd-btn-resume" id="rd-btn-resume"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- History Detail Modal -->
+    <div class="history-modal-overlay" id="history-modal-overlay">
+        <div class="history-modal" id="history-modal">
+            <button class="hm-close" id="hm-close">✕</button>
+            <div id="hm-content"></div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== i18n ====================
+        const i18n = {
+            en: {
+                title: "✦ Qwen Image Edit",
+                subtitle: "Upload an image, describe the edit, and let AI do the rest",
+                status_checking: "Checking server...",
+                status_ready: (gpu, mem) => 'Model ready • ' + gpu + (mem ? ' (' + mem + 'GB)' : ''),
+                status_loading: "Model loading on first request...",
+                status_connecting: "Connecting to server...",
+                upload_tap: "Tap to upload",
+                upload_or: "or drag & drop",
+                upload_formats: "PNG, JPG, WEBP, HEIC, HEIF, DNG, TIFF, BMP",
+                prompt_label: "Edit Prompt",
+                prompt_placeholder: "Describe how you want to edit the image...\ne.g. Change the background to a sunset beach scene",
+                neg_prompt_toggle: "+ Negative Prompt",
+                neg_prompt_open: "− Negative Prompt",
+                neg_prompt_placeholder: "Things to avoid... (e.g. blurry, low quality)",
+                adv_toggle: "⚙ Advanced Settings",
+                setting_steps: "Inference Steps",
+                setting_guidance: "Guidance Scale",
+                setting_cfg: "True CFG Scale",
+                setting_seed: "Seed",
+                btn_random_seed: "🎲",
+                setting_num_images: "Num Images",
+                setting_lightning: "⚡ Lightning (4-step)",
+                btn_generate: "✨ Generate Edit",
+                btn_generating: "Generating...",
+                progress_text: "Processing... this may take 30-90s on first run",
+                progress_done: (t) => 'Done in ' + t + 's!',
+                queue_title: "Queue Status",
+                queue_ahead: "Jobs ahead",
+                queue_eta: "Est. wait",
+                queue_total: "Total queued",
+                queue_pos: "Your position",
+                result_title: "Result",
+                result_meta: (t, s) => t + 's • Seed: ' + s,
+                btn_download: "💾 Download",
+                btn_new: "🔄 New Edit",
+                examples_title: "Try these prompts:",
+                chip_sunset: "Sunset beach",
+                chip_watercolor: "Watercolor",
+                chip_winter: "Winter scene",
+                chip_cyberpunk: "Cyberpunk",
+                chip_oil: "Oil painting",
+                chip_storm: "Storm sky",
+                chip_anime: "Anime style",
+                chip_vintage: "Vintage retro",
+                err_no_image: "Please upload an image first.",
+                err_no_prompt: "Please enter an edit prompt.",
+                err_network: (m) => 'Network error: ' + m,
+                err_failed: "Generation failed",
+                cancel_inline: "✕ Cancel",
+                resume_dialog_title: "Job already running",
+                resume_dialog_msg: (prompt) => 'Current task: "' + prompt + '"',
+                resume_btn_cancel_new: "Cancel Old & Start New",
+                resume_btn_resume: "Resume Old Job",
+                tab_queue: "📋 Queue",
+                tab_my_history: "🕐 My History",
+                tab_all_history: "🌐 All Jobs",
+                history_loading: "Loading...",
+                history_empty: "No jobs yet",
+                history_my_empty: "No jobs from your IP yet",
+                hi_prompt: "Prompt",
+                hi_settings: "Settings",
+                hi_status: "Status",
+                hi_time: "Time",
+                hi_elapsed: "Elapsed",
+                hi_result: "Result",
+                hi_input: "Input Image",
+                hi_download: "Download Result",
+                hi_seed: "Seed",
+                hi_steps: "Steps",
+                hi_cfg: "CFG",
+                hi_guidance: "Guidance",
+                hi_num_images: "Images",
+                hi_lightning: "Lightning",
+                hi_yes: "Yes",
+                hi_no: "No",
+                hi_queued_at: "Queued",
+                hi_completed_at: "Completed",
+            },
+            zh: {
+                title: "✦ Qwen 图像编辑",
+                subtitle: "上传一张图片，描述编辑效果，让 AI 帮你完成",
+                status_checking: "正在检查服务器...",
+                status_ready: (gpu, mem) => '模型就绪 • ' + gpu + (mem ? ' (' + mem + 'GB)' : ''),
+                status_loading: "首次请求时将加载模型...",
+                status_connecting: "正在连接服务器...",
+                upload_tap: "点击上传",
+                upload_or: "或拖放图片",
+                upload_formats: "支持 PNG、JPG、WEBP、HEIC、HEIF、DNG、TIFF、BMP",
+                prompt_label: "编辑提示词",
+                prompt_placeholder: "描述你想要的编辑效果...\n例如：将背景改为日落海滩场景",
+                neg_prompt_toggle: "+ 反向提示词",
+                neg_prompt_open: "− 反向提示词",
+                neg_prompt_placeholder: "需要避免的内容...（例如：模糊、低质量）",
+                adv_toggle: "⚙ 高级设置",
+                setting_steps: "推理步数",
+                setting_guidance: "引导系数",
+                setting_cfg: "True CFG 系数",
+                setting_seed: "随机种子",
+                btn_random_seed: "🎲",
+                setting_num_images: "生成数量",
+                setting_lightning: "⚡ Lightning (4步加速)",
+                btn_generate: "✨ 开始编辑",
+                btn_generating: "生成中...",
+                progress_text: "处理中... 首次运行可能需要 30-90 秒",
+                progress_done: (t) => t + ' 秒完成！',
+                queue_title: "队列状态",
+                queue_ahead: "前方任务",
+                queue_eta: "预计等待",
+                queue_total: "排队总数",
+                queue_pos: "你的位置",
+                result_title: "生成结果",
+                result_meta: (t, s) => t + ' 秒 • 种子: ' + s,
+                btn_download: "💾 下载图片",
+                btn_new: "🔄 再次编辑",
+                examples_title: "试试这些提示词：",
+                chip_sunset: "日落海滩",
+                chip_watercolor: "水彩画",
+                chip_winter: "冬季雪景",
+                chip_cyberpunk: "赛博朋克",
+                chip_oil: "油画风格",
+                chip_storm: "风暴天空",
+                chip_anime: "动漫风格",
+                chip_vintage: "复古照片",
+                err_no_image: "请先上传一张图片。",
+                err_no_prompt: "请输入编辑提示词。",
+                err_network: (m) => '网络错误: ' + m,
+                err_failed: "生成失败",
+                cancel_inline: "✕ 取消",
+                resume_dialog_title: "任务已在运行",
+                resume_dialog_msg: (prompt) => '当前任务: "' + prompt + '"',
+                resume_btn_cancel_new: "取消旧任务并开始新任务",
+                resume_btn_resume: "继续旧任务",
+                tab_queue: "📋 队列",
+                tab_my_history: "🕐 我的历史",
+                tab_all_history: "🌐 全部任务",
+                history_loading: "加载中...",
+                history_empty: "暂无任务",
+                history_my_empty: "你的 IP 暂无任务记录",
+                hi_prompt: "提示词",
+                hi_settings: "设置",
+                hi_status: "状态",
+                hi_time: "时间",
+                hi_elapsed: "耗时",
+                hi_result: "结果",
+                hi_input: "输入图片",
+                hi_download: "下载结果",
+                hi_seed: "种子",
+                hi_steps: "步数",
+                hi_cfg: "CFG",
+                hi_guidance: "引导",
+                hi_num_images: "图片数",
+                hi_lightning: "Lightning",
+                hi_yes: "是",
+                hi_no: "否",
+                hi_queued_at: "排队时间",
+                hi_completed_at: "完成时间",
+            }
+        };
+
+        let currentLang = localStorage.getItem('qwen_lang') || 'en';
+
+        function t(key, ...args) {
+            const val = i18n[currentLang][key] || i18n.en[key] || key;
+            return typeof val === 'function' ? val(...args) : val;
+        }
+
+        function applyLang() {
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                const val = t(key);
+                if (typeof val === 'string') el.textContent = val;
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                el.placeholder = t(key);
+            });
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.lang === currentLang);
+            });
+            const negWrap = document.getElementById('neg-wrap');
+            const negToggle = document.getElementById('neg-toggle');
+            if (negWrap && negToggle) {
+                negToggle.textContent = negWrap.classList.contains('visible')
+                    ? t('neg_prompt_open') : t('neg_prompt_toggle');
+            }
+            const btnText = document.getElementById('btn-text');
+            if (btnText && btnText.textContent !== t('btn_generating')) {
+                btnText.textContent = t('btn_generate');
+            }
+            localStorage.setItem('qwen_lang', currentLang);
+        }
+
+        document.querySelectorAll('.lang-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentLang = btn.dataset.lang;
+                applyLang();
+            });
+        });
+
+        // ==================== App Logic ====================
+
+        let selectedFile = null;
+        let selectedImageData = null;
+        let isGenerating = false;
+        let currentJobId = null;
+        let myIP = null;
+        let activeJobStopped = false;
+        let jobResult = null;
+
+        const sessionSeed = Math.floor(Math.random() * 999999999);
+        document.getElementById('seed').value = sessionSeed;
+
+        // Elements
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const previewImg = document.getElementById('preview-img');
+        const removeBtn = document.getElementById('remove-btn');
+        const promptEl = document.getElementById('prompt');
+        const negToggle = document.getElementById('neg-toggle');
+        const negWrap = document.getElementById('neg-wrap');
+        const negPrompt = document.getElementById('neg-prompt');
+        const advToggle = document.getElementById('adv-toggle');
+        const advWrap = document.getElementById('adv-wrap');
+        const btnGenerate = document.getElementById('btn-generate');
+        const btnText = document.getElementById('btn-text');
+        const btnSpinner = document.getElementById('btn-spinner');
+        const progressWrap = document.getElementById('progress-wrap');
+        const progressText = document.getElementById('progress-text');
+        const progressBarFill = document.getElementById('progress-bar-fill');
+        const progressPercent = document.getElementById('progress-percent');
+        const errorMsg = document.getElementById('error-msg');
+        const resultSection = document.getElementById('result-section');
+        const resultImage = document.getElementById('result-image');
+        const resultMeta = document.getElementById('result-meta');
+        const btnDownload = document.getElementById('btn-download');
+        const btnNew = document.getElementById('btn-new');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const taskBanner = document.getElementById('taskBanner');
+        const taskBannerText = document.getElementById('taskBannerText');
+        const btnResumePoll = document.getElementById('btnResumePoll');
+        const btnCancelJob = document.getElementById('btnCancelJob');
+        const btnCancelInline = document.getElementById('btn-cancel-inline');
+
+        // Check server status
+        async function checkStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                if (data.model_loaded) {
+                    statusDot.className = 'status-dot loaded';
+                    statusText.textContent = t('status_ready', data.gpu_name || 'GPU', data.gpu_memory || '');
+                } else {
+                    statusDot.className = 'status-dot';
+                    statusText.textContent = t('status_loading');
+                }
+            } catch {
+                statusDot.className = 'status-dot';
+                statusText.textContent = t('status_connecting');
+            }
+        }
+        checkStatus();
+        setInterval(checkStatus, 5000);
+
+        // ==================== Image Upload + Restore ====================
+
+        function showImagePreview(dataUrl) {
+            previewImg.src = dataUrl;
+            previewImg.style.display = 'block';
+            removeBtn.style.display = 'flex';
+            dropZone.classList.add('has-image');
+            const dropIcon = dropZone.querySelector('.drop-icon');
+            const dropTextEl = dropZone.querySelector('.drop-text');
+            if (dropIcon) dropIcon.style.display = 'none';
+            if (dropTextEl) dropTextEl.style.display = 'none';
+        }
+
+        function clearImage() {
+            selectedFile = null;
+            selectedImageData = null;
+            try { sessionStorage.removeItem('qwen_uploaded_image'); } catch(e) {}
+            previewImg.style.display = 'none';
+            previewImg.src = '';
+            removeBtn.style.display = 'none';
+            const dropIcon = dropZone.querySelector('.drop-icon');
+            const dropTextEl = dropZone.querySelector('.drop-text');
+            if (dropIcon) dropIcon.style.display = '';
+            if (dropTextEl) dropTextEl.style.display = '';
+            dropZone.classList.remove('has-image');
+            fileInput.value = '';
+        }
+
+        function handleFile(file) {
+            // Check if format needs server-side conversion
+            const ext = (file.name || '').split('.').pop().toLowerCase();
+            const needsConvert = ['heic', 'heif', 'dng', 'heics', 'heifs'].includes(ext);
+
+            if (needsConvert) {
+                // Send to server for conversion
+                handleFileConvert(file);
+                return;
+            }
+
+            if (!file.type.startsWith('image/')) return;
+            selectedFile = file;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const maxEdge = 2048;
+                    let w = img.width, h = img.height;
+                    if (w > maxEdge || h > maxEdge) {
+                        if (w >= h) { h = Math.round(h * maxEdge / w); w = maxEdge; }
+                        else       { w = Math.round(w * maxEdge / h); h = maxEdge; }
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    selectedImageData = canvas.toDataURL('image/jpeg', 0.85);
+                    try { sessionStorage.setItem('qwen_uploaded_image', selectedImageData); } catch(e) {}
+                    showImagePreview(selectedImageData);
+                };
+                img.onerror = () => {
+                    // Canvas couldn't decode (e.g. HEIC in Chrome) — try server conversion
+                    handleFileConvert(file);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Server-side image conversion (HEIC, HEIF, DNG, etc.)
+        async function handleFileConvert(file) {
+            selectedFile = file;
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const res = await fetch('/api/convert-image', { method: 'POST', body: formData });
+                const data = await res.json();
+                if (data.success && data.image) {
+                    selectedImageData = data.image;
+                    try { sessionStorage.setItem('qwen_uploaded_image', selectedImageData); } catch(e) {}
+                    showImagePreview(selectedImageData);
+                } else {
+                    showError(data.error || 'Image conversion failed');
+                }
+            } catch (e) {
+                showError('Conversion error: ' + e.message);
+            }
+        }
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault(); dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length) handleFile(files[0]);
+        });
+        fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+        removeBtn.addEventListener('click', (e) => { e.stopPropagation(); clearImage(); });
+
+        // Restore uploaded image from sessionStorage FIRST (before anything else)
+        (function restoreUploadedImage() {
+            try {
+                const saved = sessionStorage.getItem('qwen_uploaded_image');
+                if (saved) {
+                    selectedImageData = saved;
+                    showImagePreview(saved);
+                    console.log('[RESTORE] Image restored from sessionStorage');
+                }
+            } catch(e) { console.log('[RESTORE] Error:', e); }
+        })();
+
+        // ==================== Toggles ====================
+        negToggle.addEventListener('click', () => {
+            negWrap.classList.toggle('visible');
+            negToggle.textContent = negWrap.classList.contains('visible') ? t('neg_prompt_open') : t('neg_prompt_toggle');
+        });
+        advToggle.addEventListener('click', () => { advWrap.classList.toggle('visible'); });
+
+        // Auto-random seed: track if user manually edited the seed field
+        let seedEdited = false;
+        document.getElementById('seed').addEventListener('input', () => { seedEdited = true; });
+        document.getElementById('btn-rng-seed').addEventListener('click', () => {
+            const newSeed = Math.floor(Math.random() * 999999999);
+            document.getElementById('seed').value = newSeed;
+            seedEdited = true;
+        });
+
+        const lightningToggle = document.getElementById('use_lightning');
+        const stepsInput = document.getElementById('steps');
+        const cfgInput = document.getElementById('true_cfg');
+        lightningToggle.addEventListener('change', () => {
+            if (lightningToggle.checked) {
+                stepsInput.value = 4; cfgInput.value = '1.0';
+            } else {
+                stepsInput.value = '20'; cfgInput.value = '4.0';
+            }
+        });
+
+        document.querySelectorAll('.example-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                promptEl.value = currentLang === 'zh' ? chip.dataset.promptZh : chip.dataset.prompt;
+                promptEl.focus();
+            });
+        });
+
+        // ==================== Auto-resume ====================
+
+        async function checkActiveJob() {
+            try {
+                const res = await fetch('/api/my-job');
+                const job = await res.json();
+                if (job.ip) myIP = job.ip;
+                if (job.status === 'none') return;
+
+                // Running / queued job from a previous tab or refresh
+                if (['running', 'queued', 'sampling', 'loading'].includes(job.status) && !currentJobId) {
+                    taskBannerText.textContent = job.prompt
+                        ? 'Task running: "' + job.prompt + '"'
+                        : 'Task running in background...';
+                    if (job.percent !== undefined && job.percent > 0) {
+                        taskBannerText.textContent += ' (' + Math.round(job.percent) + '%)';
+                    }
+                    taskBanner.classList.add('visible');
+                    btnResumePoll.onclick = () => {
+                        taskBanner.classList.remove('visible');
+                        resumeJobPolling(job.client_id, job.job_id);
+                    };
+                    btnCancelJob.onclick = cancelJobAndHide;
+                    return;
+                }
+
+                // Completed job — auto-show result
+                if (job.status === 'complete' && job.result) {
+                    if (currentJobId && currentJobId !== job.job_id) return;
+                    jobResult = job.result;
+                    if (job.result.images && job.result.images.length > 0) {
+                        resultImage.src = job.result.images[0];
+                        resultMeta.textContent = t('result_meta', job.result.elapsed || '?', document.getElementById("seed").value || "?");
+                        resultSection.classList.add('visible');
+                        progressText.textContent = t('progress_done', job.result.elapsed || '?');
+                        progressBarFill.style.width = '100%';
+                        progressPercent.textContent = '100%';
+                        progressWrap.classList.add('visible');
+                        resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    return;
+                }
+
+                if (['error', 'cancelled'].includes(job.status)) {
+                    const msg = job.message || (job.result && job.result.error) || 'Task failed';
+                    showError(msg);
+                }
+            } catch (e) { console.log('Active job check error:', e); }
+        }
+
+        async function resumeJobPolling(clientId, jobId) {
+            isGenerating = true;
+            currentJobId = jobId;
+            btnGenerate.disabled = true;
+            btnText.textContent = t('btn_generating');
+            btnSpinner.style.display = 'block';
+            progressWrap.classList.add('visible');
+            btnCancelInline.classList.add('visible');
+            try {
+                await pollProgress(clientId);
+                const data = jobResult;
+                if (data && data.success) {
+                    resultImage.src = data.images[0];
+                    resultMeta.textContent = t('result_meta', data.elapsed || '?', document.getElementById("seed").value || "?");
+                    resultSection.classList.add('visible');
+                    progressText.textContent = t('progress_done', data.elapsed || '?');
+                    resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else if (data && data.error) {
+                    showError(data.error);
+                }
+            } catch (e) { showError(t('err_network', e.message)); }
+            finally {
+                isGenerating = false;
+                btnGenerate.disabled = false;
+                btnText.textContent = t('btn_generate');
+                btnSpinner.style.display = 'none';
+                btnCancelInline.classList.remove('visible');
+                setTimeout(() => progressWrap.classList.remove('visible'), 2000);
+            }
+        }
+
+        async function cancelJobAndHide() {
+            try { await fetch('/api/cancel-job', { method: 'POST' }); } catch (e) {}
+            taskBanner.classList.remove('visible');
+            showError('Task cancelled');
+        }
+
+        checkActiveJob();
+        const activeJobInterval = setInterval(() => {
+            if (!isGenerating && !activeJobStopped) checkActiveJob();
+        }, 10000);
+        setTimeout(() => { activeJobStopped = true; }, 120000);
+
+        // ==================== Polling ====================
+
+        async function pollProgress(clientId) {
+            const pollInterval = 500;
+            const maxWait = 600;
+            const startTime = Date.now();
+            while ((Date.now() - startTime) / 1000 < maxWait) {
+                try {
+                    const res = await fetch('/api/progress/' + clientId);
+                    const prog = await res.json();
+                    if (prog.percent !== undefined && prog.percent > 0) {
+                        progressBarFill.style.width = prog.percent + '%';
+                        progressBarFill.classList.remove('indeterminate');
+                        progressPercent.textContent = Math.round(prog.percent) + '%';
+                    }
+                    if (prog.message) progressText.textContent = prog.message;
+                    if (prog.status === 'complete' && prog.result) {
+                        jobResult = prog.result;
+                        activeJobStopped = true;
+                        progressBarFill.style.width = '100%';
+                        progressBarFill.classList.remove('indeterminate');
+                        progressPercent.textContent = '100%';
+                        return;
+                    }
+                    if (prog.status === 'error') {
+                        jobResult = prog.result || { success: false, error: prog.message };
+                        return;
+                    }
+                } catch (e) { console.log('Progress poll error:', e); }
+                await new Promise(r => setTimeout(r, pollInterval));
+            }
+            jobResult = { success: false, error: 'Timeout' };
+        }
+
+        // ==================== Generate ====================
+
+        btnGenerate.addEventListener('click', generate);
+
+        async function generate() {
+            if (isGenerating) return;
+            const prompt = promptEl.value.trim();
+            if (!selectedImageData) { showError(t('err_no_image')); return; }
+            if (!prompt) { showError(t('err_no_prompt')); return; }
+
+            isGenerating = true;
+            hideError();
+            resultSection.classList.remove('visible');
+            taskBanner.classList.remove('visible');
+            currentJobId = null;
+
+            btnGenerate.disabled = true;
+            btnText.textContent = t('btn_generating');
+            btnSpinner.style.display = 'block';
+            progressWrap.classList.add('visible');
+            btnCancelInline.classList.add('visible');
+            progressText.textContent = t('progress_text');
+            progressBarFill.style.width = '0%';
+            progressBarFill.classList.add('indeterminate');
+            progressPercent.textContent = '';
+
+            // Auto-generate random seed if user hasn't manually edited it
+            if (!seedEdited) {
+                const rngSeed = Math.floor(Math.random() * 999999999);
+                document.getElementById('seed').value = rngSeed;
+            }
+
+            // Build payload as JSON (FormData breaks on iOS Safari with large base64 strings)
+            const payload = {
+                image_base64: selectedImageData,
+                prompt: prompt,
+                negative_prompt: negPrompt.value.trim() || '',
+                num_inference_steps: parseInt(document.getElementById('steps').value) || 20,
+                guidance_scale: parseFloat(document.getElementById('guidance').value) || 1.0,
+                true_cfg_scale: parseFloat(document.getElementById('true_cfg').value) || 4.0,
+                seed: parseInt(document.getElementById('seed').value) || 0,
+                num_images: parseInt(document.getElementById('num_images').value) || 1,
+                use_lightning: document.getElementById('use_lightning').checked,
+            };
+
+            try {
+                const startTime = Date.now();
+                // Store payload for potential re-submit after cancel
+                pendingJobData = JSON.parse(JSON.stringify(payload));
+                pendingJobData.force_new = true;
+                const res = await fetch('/api/edit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const submitData = await res.json();
+                const clientId = submitData.client_id;
+                currentJobId = submitData.job_id;
+
+                if (submitData.status === 'resumed') {
+                    // Show choice dialog: cancel old & start new, or resume old
+                    showResumeDialog(submitData);
+                    return;
+                }
+
+                // Update queue panel
+                if (submitData.queue_position) {
+                    document.getElementById('queue-pos').textContent = submitData.queue_position;
+                }
+                if (submitData.eta_seconds !== undefined) {
+                    document.getElementById('qp-eta').textContent = submitData.eta_seconds > 0 ? submitData.eta_seconds + 's' : '—';
+                    document.getElementById('qp-ahead').textContent = submitData.ahead || 0;
+                    document.getElementById('qp-total').textContent = submitData.queue_length || 0;
+                }
+
+                await pollProgress(clientId);
+
+                const data = jobResult;
+                if (data && data.success) {
+                    const elapsed = data.elapsed || ((Date.now() - startTime) / 1000).toFixed(1);
+                    resultImage.src = data.images[0];
+                    resultMeta.textContent = t('result_meta', elapsed, document.getElementById('seed').value);
+                    resultSection.classList.add('visible');
+                    progressText.textContent = t('progress_done', elapsed);
+                    resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else {
+                    showError((data && data.error) || t('err_failed'));
+                }
+            } catch (err) {
+                showError(t('err_network', err.message));
+            } finally {
+                isGenerating = false;
+                btnGenerate.disabled = false;
+                btnText.textContent = t('btn_generate');
+                btnSpinner.style.display = 'none';
+                btnCancelInline.classList.remove('visible');
+                setTimeout(() => progressWrap.classList.remove('visible'), 2000);
+            }
+        }
+
+        btnDownload.addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.href = resultImage.src;
+            link.download = 'qwen-edit-' + Date.now() + '.png';
+            link.click();
+        });
+
+        btnNew.addEventListener('click', () => {
+            resultSection.classList.remove('visible');
+            promptEl.value = '';
+            promptEl.focus();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        function showError(msg) { errorMsg.textContent = msg; errorMsg.classList.add('visible'); }
+        function hideError() { errorMsg.classList.remove('visible'); }
+
+        // ==================== Queue Status ====================
+
+        const queueStatusEl = document.getElementById('queue-status');
+
+        async function updateQueueStatus() {
+            try {
+                const res = await fetch('/api/queue');
+                const snap = await res.json();
+
+                // Update inline queue status
+                document.getElementById('queue-ahead').textContent = snap.ahead || 0;
+                document.getElementById('queue-total').textContent = snap.queue_length || 0;
+                const eta = snap.eta_seconds || 0;
+                document.getElementById('queue-eta').textContent = eta > 0 ? Math.round(eta) + 's' : '—';
+
+                // Update queue panel
+                document.getElementById('qp-ahead').textContent = snap.ahead || 0;
+                document.getElementById('qp-total').textContent = snap.queue_length || 0;
+                document.getElementById('qp-eta').textContent = eta > 0 ? Math.round(eta) + 's' : '—';
+
+                // Build queue list
+                let html = '';
+                if (snap.running) {
+                    const meClass = snap.running.job_id === currentJobId ? ' me' : '';
+                    html += `<div class="queue-item active${meClass}">
+                        <span class="pos">▶</span>
+                        <span class="prompt">${escHtml(snap.running.prompt || 'Running...')}</span>
+                        <span class="pct">${snap.running.percent ? Math.round(snap.running.percent) + '%' : ''}</span>
+                    </div>`;
+                }
+                snap.entries.forEach(e => {
+                    const meClass = e.job_id === currentJobId ? ' me' : '';
+                    html += `<div class="queue-item${e.status === 'running' ? ' active' : ''}${meClass}">
+                        <span class="pos">${e.position}</span>
+                        <span class="prompt">${escHtml(e.prompt || 'Queued')}</span>
+                        <span class="pct">${e.percent ? Math.round(e.percent) + '%' : 'waiting'}</span>
+                    </div>`;
+                });
+                document.getElementById('queue-list').innerHTML = html;
+                document.getElementById('qp-list').innerHTML = html;
+
+                if (isGenerating || snap.queue_length > 0 || snap.running) {
+                    queueStatusEl.classList.add('visible');
+                } else {
+                    queueStatusEl.classList.remove('visible');
+                }
+            } catch(e) { /* queue endpoint may not exist */ }
+        }
+
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        setInterval(updateQueueStatus, 3000);
+        updateQueueStatus();
+
+        // ==================== History Tabs ====================
+
+        document.querySelectorAll('.history-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.history-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.history-panel').forEach(p => p.classList.remove('visible'));
+                tab.classList.add('active');
+                const panel = document.getElementById(tab.dataset.panel);
+                if (panel) panel.classList.add('visible');
+                // Load data on first click
+                if (tab.dataset.panel === 'panel-my-history') loadMyHistory();
+                if (tab.dataset.panel === 'panel-all-history') loadAllHistory();
+            });
+        });
+
+        async function loadMyHistory() {
+            const container = document.getElementById('my-history-content');
+            container.innerHTML = `<div class="history-empty">${t('history_loading')}</div>`;
+            try {
+                const res = await fetch('/api/my-history?limit=100');
+                const data = await res.json();
+                if (!data.records || data.records.length === 0) {
+                    container.innerHTML = `<div class="history-empty">${t('history_my_empty')}</div>`;
+                    return;
+                }
+                container.innerHTML = data.records.map(r => historyItemHtml(r, true)).join('');
+                // Attach click handlers
+                container.querySelectorAll('.history-item').forEach(item => {
+                    item.addEventListener('click', () => showHistoryDetail(item.dataset.jobId));
+                });
+            } catch(e) {
+                container.innerHTML = `<div class="history-error">${t('err_network', e.message)}</div>`;
+            }
+        }
+
+        async function loadAllHistory() {
+            const container = document.getElementById('all-history-content');
+            container.innerHTML = `<div class="history-empty">${t('history_loading')}</div>`;
+            try {
+                const res = await fetch('/api/history?limit=100');
+                const data = await res.json();
+                if (!data.records || data.records.length === 0) {
+                    container.innerHTML = `<div class="history-empty">${t('history_empty')}</div>`;
+                    return;
+                }
+                container.innerHTML = data.records.map(r => historyItemHtml(r, false)).join('');
+                container.querySelectorAll('.history-item').forEach(item => {
+                    item.addEventListener('click', () => showHistoryDetail(item.dataset.jobId));
+                });
+            } catch(e) {
+                container.innerHTML = `<div class="history-error">${t('err_network', e.message)}</div>`;
+            }
+        }
+
+        function historyItemHtml(r, isMine) {
+            const statusClass = r.status || 'queued';
+            const statusLabel = t('hi_' + statusClass) || statusClass;
+            const timeStr = r.queued_at ? new Date(r.queued_at * 1000).toLocaleString() : '?';
+            // Only show thumbnail for jobs from this IP
+            const thumbSrc = isMine && r.status === 'complete' && r.result_info && r.result_info.output_paths
+                ? r.result_info.output_paths[0]
+                : (isMine ? `/history/${r.job_id}_input.png` : 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2256%22 height=%2256%22><rect fill=%22%2324243a%22 width=%2256%22 height=%2256%22/><text x=%2228%22 y=%2232%22 text-anchor=%22middle%22 fill=%22%239898b0%22 font-size=%2220%22>🖼</text></svg>');
+            // Mask prompt for non-owner jobs with character blocks
+            const isOwner = r.ip === myIP;
+            const promptText = isOwner ? escHtml(r.prompt || '—') : '▓'.repeat(Math.min((r.prompt || '').length, 60)) || '▓▓▓▓▓▓▓▓▓▓';
+            return `<div class="history-item" data-job-id="${r.job_id}">
+                <img class="hi-thumb" src="${thumbSrc}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2256%22 height=%2256%22><rect fill=%22%2324243a%22 width=%2256%22 height=%2256%22/><text x=%2228%22 y=%2232%22 text-anchor=%22middle%22 fill=%22%239898b0%22 font-size=%2220%22>🖼</text></svg>'">
+                <div class="hi-info">
+                    <div class="hi-prompt${isOwner ? '' : ' masked'}">${promptText}</div>
+                    <div class="hi-meta">
+                        <span class="hi-status ${statusClass}">${statusLabel}</span>
+                        <span>${timeStr}</span>
+                        ${r.elapsed ? '<span>' + r.elapsed + 's</span>' : ''}
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        async function showHistoryDetail(jobId) {
+            const overlay = document.getElementById('history-modal-overlay');
+            const content = document.getElementById('hm-content');
+            content.innerHTML = `<div class="history-empty">${t('history_loading')}</div>`;
+            overlay.classList.add('visible');
+            try {
+                const res = await fetch('/api/history/' + jobId);
+                const r = await res.json();
+                let html = '';
+
+                const isOwner = r.ip === myIP;
+
+                if (isOwner) {
+                    // Full detail for owner's jobs
+                    // Prompt
+                    html += `<div class="hm-section"><h4>${t('hi_prompt')}</h4><p>${escHtml(r.prompt || '—')}</p></div>`;
+
+                    // Settings
+                    if (r.settings) {
+                        const s = r.settings;
+                        html += `<div class="hm-section"><h4>${t('hi_settings')}</h4>
+                            <div class="hm-setting-grid">
+                                <div class="hm-setting-item">${t('hi_seed')}: <span>${s.seed}</span></div>
+                                <div class="hm-setting-item">${t('hi_steps')}: <span>${s.num_inference_steps}</span></div>
+                                <div class="hm-setting-item">${t('hi_cfg')}: <span>${s.true_cfg_scale}</span></div>
+                                <div class="hm-setting-item">${t('hi_guidance')}: <span>${s.guidance_scale}</span></div>
+                                <div class="hm-setting-item">${t('hi_num_images')}: <span>${s.num_images}</span></div>
+                                <div class="hm-setting-item">${t('hi_lightning')}: <span>${s.use_lightning ? t('hi_yes') : t('hi_no')}</span></div>
+                            </div>
+                        </div>`;
+                    }
+
+                    // Input image
+                    html += `<div class="hm-section"><h4>${t('hi_input')}</h4>
+                        <img class="hm-input-img" src="/history/${jobId}_input.png"
+                            onerror="this.style.display='none'">
+                    </div>`;
+
+                    // Result image
+                    if (r.status === 'complete' && r.result_info && r.result_info.output_paths) {
+                    const outUrl = r.result_info.output_paths[0];
+                    html += `<div class="hm-section"><h4>${t('hi_result')}</h4>
+                        <img class="hm-result-img" src="${outUrl}">
+                        <br><button class="btn-action" style="margin-top:8px;width:100%"
+                            onclick="downloadUrl('${outUrl}', 'qwen-edit-${jobId}.png')">${t('hi_download')}</button>
+                    </div>`;
+                }
+                } else {
+                    // Non-owner: only show status + elapsed
+                    const statusLabel = t('hi_' + (r.status || 'queued')) || r.status;
+                    html += `<div class="hm-section"><h4>${t('hi_status')}</h4>
+                        <div class="hm-setting-grid">
+                            <div class="hm-setting-item"><span class="hi-status ${r.status}">${statusLabel}</span></div>
+                            <div class="hm-setting-item">${t('hi_elapsed')}: <span>${r.elapsed || '?'}s</span></div>
+                        </div>
+                    </div>`;
+                }
+
+                // Status + Time (always shown)
+                const statusLabel2 = t('hi_' + (r.status || 'queued')) || r.status;
+                const queuedStr = r.queued_at ? new Date(r.queued_at * 1000).toLocaleString() : '?';
+                const completedStr = r.completed_at ? new Date(r.completed_at * 1000).toLocaleString() : '?';
+                html += `<div class="hm-section"><h4>${t('hi_time')}</h4>
+                    <div class="hm-setting-grid">
+                        <div class="hm-setting-item"><span class="hi-status ${r.status}">${statusLabel2}</span></div>
+                        <div class="hm-setting-item">${t('hi_queued_at')}: <span>${queuedStr}</span></div>
+                        <div class="hm-setting-item">${t('hi_completed_at')}: <span>${completedStr}</span></div>
+                    </div>
+                </div>`;
+
+                content.innerHTML = html;
+            } catch(e) {
+                content.innerHTML = `<div class="hm-section"><p>${t('err_network', e.message)}</p></div>`;
+            }
+        }
+
+        function downloadUrl(url, filename) {
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; a.target = '_blank';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        }
+
+        document.getElementById('hm-close').addEventListener('click', () => {
+            document.getElementById('history-modal-overlay').classList.remove('visible');
+        });
+        document.getElementById('history-modal-overlay').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) {
+                document.getElementById('history-modal-overlay').classList.remove('visible');
+            }
+        });
+
+        // ==================== Resume Dialog ====================
+
+        const resumeOverlay = document.getElementById('resume-dialog-overlay');
+        const rdTitle = document.getElementById('rd-title');
+        const rdMsg = document.getElementById('rd-msg');
+        const rdBtnCancelNew = document.getElementById('rd-btn-cancel-new');
+        const rdBtnResume = document.getElementById('rd-btn-resume');
+
+        let pendingJobData = null;  // holds the JSON payload for the new job
+
+        function showResumeDialog(submitData) {
+            rdTitle.textContent = t('resume_dialog_title');
+            rdMsg.textContent = submitData.message || t('resume_dialog_msg', '');
+            rdBtnCancelNew.textContent = t('resume_btn_cancel_new');
+            rdBtnResume.textContent = t('resume_btn_resume');
+            resumeOverlay.classList.add('visible');
+
+            rdBtnCancelNew.onclick = () => {
+                resumeOverlay.classList.remove('visible');
+                // Cancel old job, then re-submit with force_new=true
+                cancelOldThenStartNew();
+            };
+            rdBtnResume.onclick = () => {
+                resumeOverlay.classList.remove('visible');
+                resumeJobPolling(submitData.client_id, submitData.job_id);
+            };
+        }
+
+        async function cancelOldThenStartNew() {
+            try {
+                await fetch('/api/cancel-job', { method: 'POST' });
+            } catch(e) { console.log('Cancel error:', e); }
+            // Re-submit with force_new
+            if (pendingJobData) {
+                try {
+                    const res = await fetch('/api/edit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(pendingJobData),
+                    });
+                    const submitData = await res.json();
+                    const clientId = submitData.client_id;
+                    currentJobId = submitData.job_id;
+
+                    if (submitData.queue_position !== undefined) {
+                        document.getElementById('qp-ahead').textContent = submitData.ahead || 0;
+                        document.getElementById('qp-total').textContent = submitData.queue_length || 0;
+                        const eta = submitData.eta_seconds || 0;
+                        document.getElementById('qp-eta').textContent = eta > 0 ? Math.round(eta) + 's' : '—';
+                    }
+
+                    await pollProgress(clientId);
+                    const data = jobResult;
+                    if (data && data.success) {
+                        const elapsed = data.elapsed || '?';
+                        resultImage.src = data.images[0];
+                        resultMeta.textContent = t('result_meta', elapsed, document.getElementById('seed').value);
+                        resultSection.classList.add('visible');
+                        progressText.textContent = t('progress_done', elapsed);
+                        resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        showError((data && data.error) || t('err_failed'));
+                    }
+                } catch(err) {
+                    showError(t('err_network', err.message));
+                } finally {
+                    isGenerating = false;
+                    btnGenerate.disabled = false;
+                    btnText.textContent = t('btn_generate');
+                    btnSpinner.style.display = 'none';
+                    setTimeout(() => progressWrap.classList.remove('visible'), 2000);
+                }
+            }
+        }
+
+        // Cancel inline button handler
+        btnCancelInline.addEventListener('click', async () => {
+            try {
+                const res = await fetch('/api/cancel-job', { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'cancelled') {
+                    showError('Job cancelled');
+                    isGenerating = false;
+                    currentJobId = null;
+                    btnGenerate.disabled = false;
+                    btnText.textContent = t('btn_generate');
+                    btnSpinner.style.display = 'none';
+                    btnCancelInline.classList.remove('visible');
+                    setTimeout(() => progressWrap.classList.remove('visible'), 2000);
+                }
+            } catch(e) { console.log('Cancel error:', e); }
+        });
+
+        // ==================== Init ====================
+        applyLang();
+    </script>
+</body>
+</html>
