@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Qwen Image Edit</title>
     <style>
         :root {
@@ -217,6 +220,41 @@
         }
         .prompt-area:focus { outline: none; border-color: var(--accent); }
         .prompt-area::placeholder { color: var(--text2); opacity: 0.6; }
+
+        /* Voice Input (Mic Button) */
+        .prompt-input-wrap {
+            position: relative;
+        }
+        .btn-mic {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-size: 1.1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .btn-mic:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .btn-mic.recording {
+            background: var(--error);
+            border-color: var(--error);
+            animation: pulse-mic 1s infinite;
+        }
+        @keyframes pulse-mic {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(248,113,113,0); }
+        }
 
         /* Negative Prompt */
         .neg-prompt-toggle {
@@ -622,6 +660,152 @@
             padding: 30px 10px;
         }
 
+        /* ==================== Memory Panel ==================== */
+        .memory-stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .memory-stat-card {
+            background: var(--surface2);
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+        }
+        .memory-stat-card .ms-value {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .memory-stat-card .ms-label {
+            font-size: 0.72rem;
+            color: var(--text2);
+            margin-top: 2px;
+        }
+        .memory-section-title {
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--accent2);
+            margin: 14px 0 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .memory-suggestion-chip {
+            display: inline-block;
+            padding: 6px 12px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text);
+            font-size: 0.78rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin: 3px;
+        }
+        .memory-suggestion-chip:hover {
+            border-color: var(--accent);
+            color: var(--accent2);
+            background: rgba(124,106,239,0.1);
+        }
+        .memory-suggestion-chip .ms-source {
+            font-size: 0.65rem;
+            color: var(--text2);
+            margin-left: 4px;
+        }
+        .memory-trending-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            background: var(--surface2);
+            border-radius: 8px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .memory-trending-item:hover {
+            border-color: var(--accent);
+            background: rgba(124,106,239,0.1);
+        }
+        .memory-trending-item .mt-rank {
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--accent);
+            min-width: 20px;
+        }
+        .memory-trending-item .mt-text {
+            flex: 1;
+            font-size: 0.78rem;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .memory-trending-item .mt-rate {
+            font-size: 0.72rem;
+            color: var(--success);
+            min-width: 40px;
+            text-align: right;
+        }
+        .memory-trending-item .mt-cat {
+            font-size: 0.65rem;
+            color: var(--text2);
+            background: var(--bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .memory-preference-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--surface2);
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+        .memory-preference-bar .mp-label {
+            font-size: 0.78rem;
+            color: var(--text2);
+            min-width: 80px;
+        }
+        .memory-preference-bar .mp-value {
+            font-size: 0.78rem;
+            color: var(--text);
+            font-weight: 600;
+        }
+        .memory-insight-item {
+            padding: 8px 10px;
+            background: var(--surface2);
+            border-radius: 8px;
+            margin-bottom: 6px;
+            font-size: 0.78rem;
+            color: var(--text2);
+            border-left: 3px solid var(--accent);
+        }
+        .memory-insight-item .mi-type {
+            font-size: 0.68rem;
+            color: var(--accent2);
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+        .memory-apply-btn {
+            display: inline-block;
+            padding: 6px 14px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: all 0.2s;
+        }
+        .memory-apply-btn:hover {
+            background: var(--accent2);
+        }
+
         /* History Detail Modal */
         .history-modal-overlay {
             display: none;
@@ -793,7 +977,10 @@
         <!-- Prompt -->
         <div class="prompt-section">
             <label class="prompt-label" data-i18n="prompt_label">Edit Prompt</label>
-            <textarea class="prompt-area" id="prompt" data-i18n-placeholder="prompt_placeholder" placeholder="Describe how you want to edit the image...&#10;e.g. Change the background to a sunset beach scene"></textarea>
+            <div class="prompt-input-wrap">
+                <textarea class="prompt-area" id="prompt" data-i18n-placeholder="prompt_placeholder" placeholder="Describe how you want to edit the image...&#10;e.g. Change the background to a sunset beach scene"></textarea>
+                <button type="button" class="btn-mic" id="btn-mic" title="Voice input">🎤</button>
+            </div>
         </div>
 
         <!-- Negative Prompt -->
@@ -918,6 +1105,7 @@
             <div class="history-tab active" data-panel="panel-queue" data-i18n="tab_queue">📋 Queue</div>
             <div class="history-tab" data-panel="panel-my-history" data-i18n="tab_my_history">🕐 My History</div>
             <div class="history-tab" data-panel="panel-all-history" data-i18n="tab_all_history">🌐 All Jobs</div>
+            <div class="history-tab" data-panel="panel-memory" data-i18n="tab_memory">🧠 Memory</div>
         </div>
 
         <!-- Queue Panel -->
@@ -950,6 +1138,13 @@
         <div class="history-panel" id="panel-all-history">
             <div id="all-history-content">
                 <div class="history-empty" data-i18n="history_loading">Loading all jobs...</div>
+            </div>
+        </div>
+
+        <!-- Memory Panel (Persistent Intelligence) -->
+        <div class="history-panel" id="panel-memory">
+            <div id="memory-content">
+                <div class="history-empty" data-i18n="memory_loading">🧠 Loading memory...</div>
             </div>
         </div>
 
@@ -1061,6 +1256,28 @@
                 hi_no: "No",
                 hi_queued_at: "Queued",
                 hi_completed_at: "Completed",
+                tab_memory: "🧠 Memory",
+                memory_loading: "🧠 Loading memory...",
+                memory_stats: "System Stats",
+                memory_suggestions: "Smart Suggestions",
+                memory_trending: "Trending Prompts",
+                memory_preferences: "Your Learned Preferences",
+                memory_insights: "System Insights",
+                memory_apply_settings: "Apply Learned Settings",
+                memory_click_use: "click to use",
+                memory_no_data: "Memory will learn from your edits over time",
+                memory_total_jobs: "Jobs Tracked",
+                memory_success_rate: "Success Rate",
+                memory_patterns: "Patterns Learned",
+                memory_users: "Unique Users",
+                memory_avg_time: "Avg Time",
+                memory_source_history: "your history",
+                memory_source_trending: "trending",
+                memory_source_kb: "knowledge base",
+                mic_title: "Voice input",
+                mic_recording: "Recording...",
+                mic_hint: "Tap 🎤 to speak your edit prompt",
+                mic_max_time: "Max recording time (30s) reached",
             },
             zh: {
                 title: "✦ Qwen 图像编辑",
@@ -1140,6 +1357,28 @@
                 hi_no: "否",
                 hi_queued_at: "排队时间",
                 hi_completed_at: "完成时间",
+                tab_memory: "🧠 记忆",
+                memory_loading: "🧠 加载记忆...",
+                memory_stats: "系统统计",
+                memory_suggestions: "智能推荐",
+                memory_trending: "热门提示词",
+                memory_preferences: "学习到的偏好",
+                memory_insights: "系统洞察",
+                memory_apply_settings: "应用学习设置",
+                memory_click_use: "点击使用",
+                memory_no_data: "记忆系统会从你的编辑中持续学习",
+                memory_total_jobs: "追踪任务",
+                memory_success_rate: "成功率",
+                memory_patterns: "学习模式",
+                memory_users: "独立用户",
+                memory_avg_time: "平均耗时",
+                memory_source_history: "你的历史",
+                memory_source_trending: "热门",
+                memory_source_kb: "知识库",
+                mic_title: "语音输入",
+                mic_recording: "录音中...",
+                mic_hint: "点击 🎤 语音输入编辑提示词",
+                mic_max_time: "最长录音时间 (30s) 已到",
             }
         };
 
@@ -1707,6 +1946,7 @@
                 // Load data on first click
                 if (tab.dataset.panel === 'panel-my-history') loadMyHistory();
                 if (tab.dataset.panel === 'panel-all-history') loadAllHistory();
+                if (tab.dataset.panel === 'panel-memory') loadMemoryPanel();
             });
         });
 
@@ -1855,6 +2095,197 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a);
         }
 
+        // ==================== Memory Panel (Persistent Intelligence) ====================
+
+        let memoryLoaded = false;
+
+        async function loadMemoryPanel() {
+            const container = document.getElementById('memory-content');
+            if (memoryLoaded) return; // only load once
+            memoryLoaded = true;
+            container.innerHTML = `<div class="history-empty">${t('memory_loading')}</div>`;
+
+            try {
+                // Load all memory data in parallel
+                const [statsRes, suggestionsRes, trendingRes, prefsRes, insightsRes] = await Promise.all([
+                    fetch('/api/memory/stats').then(r => r.json()).catch(() => ({})),
+                    fetch('/api/memory/suggestions?limit=8').then(r => r.json()).catch(() => ({})),
+                    fetch('/api/memory/trending?limit=8').then(r => r.json()).catch(() => ({})),
+                    fetch('/api/memory/preferences').then(r => r.json()).catch(() => ({})),
+                    fetch('/api/memory/insights?limit=3').then(r => r.json()).catch(() => ({})),
+                ]);
+
+                const stats = statsRes || {};
+                const suggestions = (suggestionsRes.suggestions || []).filter(s => s.text);
+                const trending = (trendingRes.trending || []).filter(t => t.text);
+                const prefs = prefsRes.preferences || {};
+                const insights = (insightsRes.insights || []);
+
+                let html = '';
+
+                // --- Stats Section ---
+                html += `<div class="memory-section-title">📊 ${t('memory_stats')}</div>`;
+                html += `<div class="memory-stats-grid">`;
+                html += `<div class="memory-stat-card"><div class="ms-value">${stats.total_jobs_tracked || 0}</div><div class="ms-label">${t('memory_total_jobs')}</div></div>`;
+                html += `<div class="memory-stat-card"><div class="ms-value">${((stats.success_rate || 0) * 100).toFixed(0)}%</div><div class="ms-label">${t('memory_success_rate')}</div></div>`;
+                html += `<div class="memory-stat-card"><div class="ms-value">${stats.unique_patterns_learned || 0}</div><div class="ms-label">${t('memory_patterns')}</div></div>`;
+                html += `<div class="memory-stat-card"><div class="ms-value">${stats.unique_users || 0}</div><div class="ms-label">${t('memory_users')}</div></div>`;
+                html += `</div>`;
+
+                // --- Smart Suggestions ---
+                if (suggestions.length > 0) {
+                    html += `<div class="memory-section-title">💡 ${t('memory_suggestions')} <span style="font-size:0.7rem;color:var(--text2)">(${t('memory_click_use')})</span></div>`;
+                    suggestions.forEach(s => {
+                        let sourceLabel = '';
+                        if (s.source === 'your_history') sourceLabel = t('memory_source_history');
+                        else if (s.source === 'trending') sourceLabel = t('memory_source_trending');
+                        else if (s.source === 'knowledge_base') sourceLabel = t('memory_source_kb');
+                        html += `<span class="memory-suggestion-chip" data-prompt="${escHtml(s.text)}" title="${sourceLabel}">${escHtml(s.text)}<span class="ms-source">${sourceLabel}</span></span>`;
+                    });
+                    html += `<br>`;
+                }
+
+                // --- Trending Prompts ---
+                if (trending.length > 0) {
+                    html += `<div class="memory-section-title">🔥 ${t('memory_trending')}</div>`;
+                    trending.forEach((tr, i) => {
+                        html += `<div class="memory-trending-item" data-prompt="${escHtml(tr.text)}">`;
+                        html += `<span class="mt-rank">#${i+1}</span>`;
+                        html += `<span class="mt-text">${escHtml(tr.text)}</span>`;
+                        html += `<span class="mt-cat">${escHtml(tr.category || '')}</span>`;
+                        html += `<span class="mt-rate">${(tr.success_rate * 100).toFixed(0)}%</span>`;
+                        html += `</div>`;
+                    });
+                }
+
+                // --- User Preferences ---
+                if (prefs.total_jobs > 0) {
+                    html += `<div class="memory-section-title">🎯 ${t('memory_preferences')}</div>`;
+                    html += `<div class="memory-preference-bar"><span class="mp-label">Lightning:</span><span class="mp-value">${prefs.preferred_lightning ? '✅ On' : '❌ Off'}</span></div>`;
+                    html += `<div class="memory-preference-bar"><span class="mp-label">Steps:</span><span class="mp-value">${prefs.preferred_steps}</span></div>`;
+                    html += `<div class="memory-preference-bar"><span class="mp-label">CFG:</span><span class="mp-value">${prefs.preferred_cfg}</span></div>`;
+                    html += `<div class="memory-preference-bar"><span class="mp-label">Guidance:</span><span class="mp-value">${prefs.preferred_guidance}</span></div>`;
+                    html += `<div class="memory-preference-bar"><span class="mp-label">Jobs:</span><span class="mp-value">${prefs.successful_jobs}/${prefs.total_jobs} ✓</span></div>`;
+                    if (prefs.favorite_categories && prefs.favorite_categories.length > 0) {
+                        html += `<div class="memory-preference-bar"><span class="mp-label">Categories:</span><span class="mp-value">${prefs.favorite_categories.map(c => {
+                            // Show category name in readable format
+                            const catLabels = {
+                                'style_watercolor': '🎨 Watercolor', 'style_oil': '🖌️ Oil',
+                                'style_anime': '🎌 Anime', 'style_cyberpunk': '🌃 Cyberpunk',
+                                'style_vintage': '📷 Vintage', 'scene_sunset': '🌅 Sunset',
+                                'scene_winter': '❄️ Winter', 'scene_beach': '🏖️ Beach',
+                                'edit_hair': '💇 Hair', 'edit_age_younger': '👶 Younger',
+                                'edit_background': '🖼️ Background', 'light_cinematic': '🎬 Cinematic',
+                            };
+                            return catLabels[c] || c;
+                        }).join(', ')}</span></div>`;
+                    }
+                    html += `<button class="memory-apply-btn" id="btn-apply-prefs">⚡ ${t('memory_apply_settings')}</button>`;
+                }
+
+                // --- System Insights ---
+                if (insights.length > 0) {
+                    html += `<div class="memory-section-title">🔮 ${t('memory_insights')}</div>`;
+                    insights.forEach(ins => {
+                        let contentStr = '';
+                        if (ins.type === 'popular_categories') {
+                            contentStr = `Top categories tracked across ${stats.total_jobs_tracked || '?'} jobs`;
+                        } else if (ins.type === 'best_patterns') {
+                            contentStr = `${ins.content.length} high-success patterns identified`;
+                        } else if (ins.type === 'avg_elapsed') {
+                            contentStr = `Average completion: ${ins.content.avg_elapsed || '?'}s`;
+                        } else if (ins.type === 'success_rate') {
+                            contentStr = `System success rate: ${(ins.content.success_rate * 100).toFixed(1)}%`;
+                        }
+                        html += `<div class="memory-insight-item"><div class="mi-type">${ins.type}</div>${contentStr}</div>`;
+                    });
+                }
+
+                // No data message
+                if (!suggestions.length && !trending.length && prefs.total_jobs === 0 && !insights.length) {
+                    html += `<div class="history-empty">${t('memory_no_data')}</div>`;
+                }
+
+                container.innerHTML = html;
+
+                // Attach click handlers for suggestion chips
+                container.querySelectorAll('.memory-suggestion-chip[data-prompt]').forEach(chip => {
+                    chip.addEventListener('click', () => {
+                        promptEl.value = chip.dataset.prompt;
+                        promptEl.focus();
+                        // Scroll to prompt
+                        promptEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    });
+                });
+
+                // Attach click handlers for trending items
+                container.querySelectorAll('.memory-trending-item[data-prompt]').forEach(item => {
+                    item.addEventListener('click', () => {
+                        promptEl.value = item.dataset.prompt;
+                        promptEl.focus();
+                        promptEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    });
+                });
+
+                // Apply preferences button
+                const applyBtn = document.getElementById('btn-apply-prefs');
+                if (applyBtn) {
+                    applyBtn.addEventListener('click', () => {
+                        applyPreferences(prefs);
+                        applyBtn.textContent = '✅ Applied!';
+                        setTimeout(() => { applyBtn.textContent = t('memory_apply_settings'); }, 2000);
+                    });
+                }
+
+            } catch (e) {
+                container.innerHTML = `<div class="history-empty">${t('err_network', e.message)}</div>`;
+            }
+        }
+
+        function applyPreferences(prefs) {
+            // Apply learned preferences to the form settings
+            if (prefs.preferred_lightning !== undefined) {
+                document.getElementById('use_lightning').checked = prefs.preferred_lightning;
+                if (prefs.preferred_lightning) {
+                    document.getElementById('steps').value = prefs.preferred_steps || 4;
+                    document.getElementById('true_cfg').value = prefs.preferred_cfg || 1.0;
+                }
+            }
+            if (prefs.preferred_steps) {
+                document.getElementById('steps').value = prefs.preferred_steps;
+            }
+            if (prefs.preferred_cfg) {
+                document.getElementById('true_cfg').value = prefs.preferred_cfg;
+            }
+            if (prefs.preferred_guidance) {
+                document.getElementById('guidance').value = prefs.preferred_guidance;
+            }
+        }
+
+        // Auto-load smart defaults on page load
+        (function loadSmartDefaults() {
+            fetch('/api/memory/settings')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.settings) {
+                        const s = data.settings;
+                        if (s.use_lightning !== undefined) {
+                            document.getElementById('use_lightning').checked = s.use_lightning;
+                        }
+                        if (s.num_inference_steps) {
+                            document.getElementById('steps').value = s.num_inference_steps;
+                        }
+                        if (s.true_cfg_scale) {
+                            document.getElementById('true_cfg').value = s.true_cfg_scale;
+                        }
+                        if (s.guidance_scale) {
+                            document.getElementById('guidance').value = s.guidance_scale;
+                        }
+                    }
+                })
+                .catch(() => {});
+        })();
+
         document.getElementById('hm-close').addEventListener('click', () => {
             document.getElementById('history-modal-overlay').classList.remove('visible');
         });
@@ -1956,6 +2387,152 @@
                 }
             } catch(e) { console.log('Cancel error:', e); }
         });
+
+        // ==================== Voice Input ====================
+        const btnMic = document.getElementById('btn-mic');
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+        let recordingTimeout = null;
+
+        function playBeep(freq, duration, volume) {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.value = volume || 0.3;
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+                osc.connect(gain).connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + duration);
+                setTimeout(() => ctx.close(), (duration + 0.1) * 1000);
+            } catch (e) { /* silent fallback */ }
+        }
+
+        btnMic.addEventListener('click', async () => {
+            // Instantly disable to prevent double-click while awaiting getUserMedia
+            btnMic.disabled = true;
+
+            if (isRecording) {
+                // Stop recording — let onstop handle all UI state resets asynchronously
+                clearTimeout(recordingTimeout);
+                mediaRecorder.stop();
+                return;
+            }
+
+            // Start recording
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { sampleRate: 16000, channelCount: 1 }
+                });
+
+                // Dynamic mimeType: WebM for Chrome/Firefox, MP4 for Safari/iOS
+                let recorderOptions = {};
+                if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                    recorderOptions = { mimeType: 'audio/webm;codecs=opus' };
+                } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                    recorderOptions = { mimeType: 'audio/mp4' };  // iOS Safari fallback
+                }
+                // If neither supported, let browser use its default
+
+                mediaRecorder = new MediaRecorder(stream, recorderOptions);
+                audioChunks = [];
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                mediaRecorder.onstop = async () => {
+                    // Centralize all recording state resets here (prevents UI flicker)
+                    isRecording = false;
+                    btnMic.classList.remove('recording');
+
+                    if (audioChunks.length === 0) {
+                        console.warn('[STT] No audio data recorded. Discarding.');
+                        stream.getTracks().forEach(t => t.stop());
+                        btnMic.textContent = '🎤';
+                        btnMic.disabled = false;
+                        return;
+                    }
+
+                    const actualMimeType = mediaRecorder.mimeType || 'audio/webm';
+                    const audioBlob = new Blob(audioChunks, { type: actualMimeType });
+
+                    if (audioBlob.size === 0) {
+                        console.warn('[STT] Empty audio blob. Discarding.');
+                        stream.getTracks().forEach(t => t.stop());
+                        btnMic.textContent = '🎤';
+                        btnMic.disabled = false;
+                        return;
+                    }
+
+                    // Pass verified local extension to sendTranscription (decouples from global mediaRecorder)
+                    const fileExt = actualMimeType.includes('mp4') ? 'mp4' : 'webm';
+                    await sendTranscription(audioBlob, fileExt);
+                    stream.getTracks().forEach(t => t.stop());
+                };
+                mediaRecorder.start();
+                playBeep(880, 0.12, 0.3); // Short beep to confirm recording started
+                btnMic.classList.add('recording');
+                btnMic.textContent = '⏹';
+                btnMic.disabled = false;
+                isRecording = true;
+
+                // Auto-stop after 30 seconds to prevent runaway recording
+                recordingTimeout = setTimeout(() => {
+                    if (isRecording) {
+                        btnMic.disabled = true;  // Lock button; let onstop clear states
+                        mediaRecorder.stop();
+
+                        const lang = (typeof currentLang !== 'undefined') ? currentLang : 'en';
+                        const msg = lang === 'zh' ? '最长录音时间 (30s) 已到' : 'Max recording time (30s) reached';
+                        showError(msg);
+                    }
+                }, 30000);
+            } catch (err) {
+                clearTimeout(recordingTimeout);
+                btnMic.disabled = false;  // Re-enable so user can retry after fixing permission/hardware
+                showError('Microphone access denied: ' + err.message);
+            }
+        });
+
+        async function sendTranscription(audioBlob, fileExt) {
+            btnMic.disabled = true;
+            btnMic.textContent = '⏳';
+            try {
+                const formData = new FormData();
+                // fileExt passed from onstop scope — decoupled from global mediaRecorder
+                formData.append('audio', audioBlob, `recording.${fileExt || 'webm'}`);
+                // Safe scope evaluation: currentLang may be scoped inside an IIFE
+                const safeLang = (typeof currentLang !== 'undefined' && currentLang === 'zh') ? 'zh' : 'en';
+                formData.append('language', safeLang);
+
+                const resp = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    // Only update textarea if actual speech tokens were returned
+                    if (data.text && data.text.trim()) {
+                        const promptEl = document.getElementById('prompt');
+                        // Replace existing prompt with transcribed text
+                        promptEl.value = data.text;
+                        // Force SPA frameworks (React/Vue/Svelte) to register the value change
+                        promptEl.dispatchEvent(new Event('input', { bubbles: true }));
+                        promptEl.dispatchEvent(new Event('change', { bubbles: true }));
+                        promptEl.focus();
+                    }
+                    // Successful but empty transcriptions (silence) gracefully do nothing
+                } else {
+                    // Strictly catches true backend engine errors
+                    showError('Transcription error: ' + (data.error || 'Unknown'));
+                }
+            } catch (err) {
+                showError('Network error: ' + err.message);
+            } finally {
+                btnMic.disabled = false;
+                btnMic.textContent = '🎤';
+            }
+        }
 
         // ==================== Init ====================
         applyLang();

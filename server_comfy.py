@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Qwen-Image-Edit-2511 Web Server (ComfyUI Backend)
-Uses ComfyUI with fp8 models that fit on 24GB GPUs (RTX 3090).
+Qwen-Rapid-AIO Web Server (ComfyUI Backend)
+Uses ComfyUI with Qwen-Rapid-AIO-NSFW-v19 single-checkpoint model.
+Supports up to 2 input images for image editing.
 
 Queue system: single global FIFO queue with dispatcher thread.
 Every user sees their queue position and ETA regardless of IP.
 Session history: all jobs persisted; each IP can view their own history.
 """
 
+import glob
 import io
 import os
 import sys
@@ -17,6 +19,8 @@ import uuid
 import base64
 import socket
 import shutil
+import sqlite3
+import tempfile
 import threading
 import urllib.request
 import urllib.parse
@@ -27,6 +31,20 @@ import pillow_heif
 pillow_heif.register_heif_opener()
 from flask import Flask, request, jsonify, render_template, send_from_directory
 
+# --- Persistent Intelligence / Memory Engine ---
+from memory_engine import (
+    record_job_outcome,
+    get_suggestions_for_ip,
+    get_user_preferences,
+    get_trending_prompts,
+    get_memory_stats,
+    get_recent_insights,
+    get_smart_default_settings,
+    search_memory,
+    enhance_prompt,
+    categorize_prompt,
+)
+
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100MB
 
@@ -36,12 +54,52 @@ COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
 COMFYUI_URL = f"http://{COMFYUI_HOST}:{COMFYUI_PORT}"
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 HISTORY_DIR = os.path.join(os.path.dirname(__file__), "history")
+ARCHIVE_DIR = os.path.join(os.path.dirname(__file__), "archive")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(HISTORY_DIR, exist_ok=True)
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 # Average job duration (seconds) — used for ETA estimation.
 AVG_JOB_DURATION = 45.0
 avg_duration_lock = threading.Lock()
+
+# --- SQLite History Database ---
+DB_PATH = os.path.join(os.path.dirname(__file__), "history.db")
+
+def _get_db():
+    """Get a thread-local SQLite connection."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+def _ensure_db():
+    """Create the jobs table if it doesn't exist."""
+    conn = _get_db()
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            client_id TEXT,
+            ip TEXT,
+            prompt TEXT,
+            negative_prompt TEXT,
+            num_inference_steps INTEGER,
+            guidance_scale REAL,
+            true_cfg_scale REAL,
+            seed INTEGER,
+            num_images INTEGER,
+            use_lightning BOOLEAN,
+            status TEXT,
+            result_info TEXT,
+            queued_at REAL,
+            completed_at REAL,
+            elapsed REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+_ensure_db()
 
 # ===================================================================
 # Global FIFO Queue
@@ -65,8 +123,71 @@ def get_client_ip():
 def save_job_history(job_id, client_id, ip, prompt, negative_prompt, num_inference_steps,
                      guidance_scale, true_cfg_scale, seed, num_images, use_lightning,
                      image_b64_thumb, status, result_info, queued_at, completed_at):
-    """Persist a job record to disk as JSON."""
-    record = {
+    """Persist a job record to SQLite."""
+    elapsed = result_info.get('elapsed') if isinstance(result_info, dict) else None
+    conn = _get_db()
+    try:
+        conn.execute('''
+            INSERT OR REPLACE INTO jobs
+            (job_id, client_id, ip, prompt, negative_prompt,
+             num_inference_steps, guidance_scale, true_cfg_scale,
+             seed, num_images, use_lightning, status, result_info,
+             queued_at, completed_at, elapsed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            job_id, client_id, ip,
+            prompt[:500], (negative_prompt or '')[:200],
+            num_inference_steps, guidance_scale, true_cfg_scale,
+            seed, num_images, use_lightning,
+            status, json.dumps(result_info, default=str),
+            queued_at, completed_at, elapsed
+        ))
+        conn.commit()
+    except Exception as e:
+        print(f"[HISTORY] Save error for {job_id}: {e}")
+    finally:
+        conn.close()
+
+    # Save thumbnail of input image (first 30KB of base64)
+    if image_b64_thumb:
+        thumb_path = os.path.join(HISTORY_DIR, f"{job_id}_input.png")
+        try:
+            raw = base64.b64decode(image_b64_thumb[:40000])
+            with open(thumb_path, 'wb') as f:
+                f.write(raw)
+        except Exception:
+            pass
+
+
+def archive_job(job_id, client_id, ip, prompt, negative_prompt, num_inference_steps,
+                guidance_scale, true_cfg_scale, seed, num_images, use_lightning,
+                image_b64_thumb, status, result_info, queued_at, completed_at, output_paths=None):
+    """Archive completed job: input image, all output PNGs, and metadata JSON.
+    Stored in archive/<job_id>/ — never cleaned up by the cleanup loop."""
+    job_dir = os.path.join(ARCHIVE_DIR, job_id)
+    os.makedirs(job_dir, exist_ok=True)
+
+    # Save input image
+    if image_b64_thumb:
+        try:
+            raw = base64.b64decode(image_b64_thumb[:40000])
+            with open(os.path.join(job_dir, "input.png"), 'wb') as f:
+                f.write(raw)
+        except Exception:
+            pass
+
+    # Save output images (copy from outputs/)
+    if output_paths:
+        for i, rel_path in enumerate(output_paths):
+            src = os.path.join(os.path.dirname(__file__), rel_path.lstrip('/'))
+            dst = os.path.join(job_dir, f"output_{i}.png")
+            try:
+                shutil.copy2(src, dst)
+            except Exception as e:
+                print(f"[ARCHIVE] Copy error {src} -> {dst}: {e}")
+
+    # Save metadata JSON
+    meta = {
         'job_id': job_id,
         'client_id': client_id,
         'ip': ip,
@@ -84,55 +205,89 @@ def save_job_history(job_id, client_id, ip, prompt, negative_prompt, num_inferen
         'result_info': result_info,
         'queued_at': queued_at,
         'completed_at': completed_at,
-        'elapsed': result_info.get('elapsed') if result_info else None,
+        'elapsed': result_info.get('elapsed') if isinstance(result_info, dict) else None,
+        'archived_at': time.time(),
     }
-    path = os.path.join(HISTORY_DIR, f"{job_id}.json")
     try:
-        with open(path, 'w') as f:
-            json.dump(record, f, default=str)
+        with open(os.path.join(job_dir, 'metadata.json'), 'w') as f:
+            json.dump(meta, f, indent=2, default=str)
     except Exception as e:
-        print(f"[HISTORY] Save error for {job_id}: {e}")
+        print(f"[ARCHIVE] Metadata save error for {job_id}: {e}")
 
-    # Save thumbnail of input image (first 30KB of base64)
-    if image_b64_thumb:
-        thumb_path = os.path.join(HISTORY_DIR, f"{job_id}_input.png")
+
+def _row_to_dict(row):
+    """Convert a sqlite3.Row to a dict with nested settings."""
+    d = dict(row)
+    # Flatten into the same structure the frontend expects
+    d['settings'] = {
+        'num_inference_steps': d.pop('num_inference_steps'),
+        'guidance_scale': d.pop('guidance_scale'),
+        'true_cfg_scale': d.pop('true_cfg_scale'),
+        'seed': d.pop('seed'),
+        'num_images': d.pop('num_images'),
+        'use_lightning': d.pop('use_lightning'),
+    }
+    # Parse result_info JSON
+    ri = d.get('result_info')
+    if isinstance(ri, str):
         try:
-            raw = base64.b64decode(image_b64_thumb[:40000])
-            with open(thumb_path, 'wb') as f:
-                f.write(raw)
-        except Exception:
-            pass
+            d['result_info'] = json.loads(ri)
+        except (json.JSONDecodeError, TypeError):
+            d['result_info'] = {}
+    return d
 
 
 def get_all_history(limit=100):
     """Return list of all job history records, newest first."""
-    records = []
-    if not os.path.isdir(HISTORY_DIR):
-        return records
-    for fname in os.listdir(HISTORY_DIR):
-        if fname.endswith('.json'):
-            path = os.path.join(HISTORY_DIR, fname)
-            try:
-                with open(path) as f:
-                    rec = json.load(f)
-                records.append(rec)
-            except Exception:
-                pass
-    records.sort(key=lambda r: r.get('queued_at', 0), reverse=True)
-    return records[:limit]
+    conn = _get_db()
+    try:
+        rows = conn.execute(
+            'SELECT * FROM jobs ORDER BY queued_at DESC LIMIT ?', (limit,)
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+    except Exception as e:
+        print(f"[HISTORY] Read error: {e}")
+        return []
+    finally:
+        conn.close()
 
 
 def get_ip_history(ip, limit=100):
     """Return history records for a specific IP."""
-    all_recs = get_all_history(limit * 2)
-    return [r for r in all_recs if r.get('ip') == ip][:limit]
+    conn = _get_db()
+    try:
+        rows = conn.execute(
+            'SELECT * FROM jobs WHERE ip = ? ORDER BY queued_at DESC LIMIT ?',
+            (ip, limit)
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+    except Exception as e:
+        print(f"[HISTORY] Read error: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_job_history(job_id):
+    """Return a single job record by ID."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            'SELECT * FROM jobs WHERE job_id = ?', (job_id,)
+        ).fetchone()
+        return _row_to_dict(row) if row else None
+    except Exception as e:
+        print(f"[HISTORY] Read error: {e}")
+        return None
+    finally:
+        conn.close()
 
 
 # ------------------------------------------------------------------
 # Queue helpers  (all hold queue_lock)
 # ------------------------------------------------------------------
 
-def enqueue_job(ip, client_id, job_id, prompt, workflow, image_b64):
+def enqueue_job(ip, client_id, job_id, prompt, workflow, image_b64_1, image_b64_2=""):
     with queue_lock:
         entry = {
             'job_id': job_id,
@@ -140,7 +295,8 @@ def enqueue_job(ip, client_id, job_id, prompt, workflow, image_b64):
             'ip': ip,
             'prompt': prompt[:100],
             'workflow': workflow,
-            'image_b64': image_b64,
+            'image_b64_1': image_b64_1,
+            'image_b64_2': image_b64_2,
             'queued_at': time.time(),
         }
         job_queue.append(entry)
@@ -234,6 +390,60 @@ def update_ip_job_status(ip, status, **kw):
 # Dispatcher thread
 # ------------------------------------------------------------------
 
+def _finalize_job(job_id, client_id, ip, prompt, neg_prompt,
+                  num_steps, guidance, cfg, seed, num_images, use_lightning,
+                  image_b64_thumb, status, result_info, queued_at, completed_at):
+    """Consolidated helper: update progress, IP status, persist history, and archive."""
+    elapsed = result_info.get('elapsed') if isinstance(result_info, dict) else None
+
+    # --- Persistent Intelligence: Record job outcome for learning ---
+    settings_for_memory = {
+        'num_inference_steps': num_steps,
+        'guidance_scale': guidance,
+        'true_cfg_scale': cfg,
+        'seed': seed,
+        'num_images': num_images,
+        'use_lightning': use_lightning,
+    }
+    try:
+        record_job_outcome(job_id, ip, prompt, settings_for_memory,
+                           status, elapsed, completed_at)
+    except Exception as e:
+        print(f"[MEMORY] Record outcome error for {job_id}: {e}")
+    if status == 'complete':
+        job_progress[client_id] = {
+            'status': 'complete', 'message': f"Done in {elapsed}s" if elapsed else 'Done',
+            'elapsed': elapsed, 'percent': 100,
+            'result': result_info,
+            '_ts': time.time(),
+        }
+        update_ip_job_status(ip, 'complete', completed_at=completed_at)
+    else:
+        job_progress[client_id] = {
+            'status': 'error', 'message': result_info.get('error', 'Job failed'),
+            'elapsed': elapsed,
+            'result': {'success': False, 'error': result_info.get('error', 'Job failed'), 'elapsed': elapsed},
+            '_ts': time.time(),
+        }
+        update_ip_job_status(ip, 'error', completed_at=completed_at)
+
+    save_job_history(job_id, client_id, ip, prompt, neg_prompt,
+                    num_steps, guidance, cfg, seed, num_images, use_lightning,
+                    image_b64_thumb, status, result_info, queued_at, completed_at)
+
+    # Archive completed jobs: input + output PNGs + metadata JSON
+    if status == 'complete':
+        output_paths = result_info.get('output_paths', []) if isinstance(result_info, dict) else []
+        archive_job(job_id, client_id, ip, prompt, neg_prompt,
+                   num_steps, guidance, cfg, seed, num_images, use_lightning,
+                   image_b64_thumb, status, result_info, queued_at, completed_at,
+                   output_paths=output_paths)
+
+    with queue_lock:
+        global running_job
+        running_job = None
+
+
 def _run_single_job(entry):
     global running_job
     client_id = entry['client_id']
@@ -242,15 +452,13 @@ def _run_single_job(entry):
     workflow = entry['workflow']
     queued_at = entry['queued_at']
 
-    # Extract settings from workflow for history
-    neg_prompt = workflow.get("102", {}).get("inputs", {}).get("prompt", "")
-    num_steps = workflow.get("3", {}).get("inputs", {}).get("steps", 20)
-    seed = workflow.get("3", {}).get("inputs", {}).get("seed", 42)
-    cfg = workflow.get("3", {}).get("inputs", {}).get("cfg", 1.0)
-    num_images = 1
-    if "94" in workflow:
-        num_images = workflow["94"].get("inputs", {}).get("amount", 1)
-    use_lightning = "89" in workflow
+    # Extract settings from workflow for history (new node IDs for Qwen-Rapid-AIO)
+    neg_prompt = workflow.get("4", {}).get("inputs", {}).get("prompt", "")
+    num_steps = workflow.get("2", {}).get("inputs", {}).get("steps", 4)
+    seed = workflow.get("2", {}).get("inputs", {}).get("seed", 42)
+    cfg = workflow.get("2", {}).get("inputs", {}).get("cfg", 1.0)
+    num_images = workflow.get("9", {}).get("inputs", {}).get("batch_size", 1)
+    use_lightning = True  # Qwen-Rapid-AIO always uses lightning-like fast sampling
 
     with queue_lock:
         running_job = entry
@@ -259,23 +467,43 @@ def _run_single_job(entry):
 
     print(f"\n[DISPATCH] [{job_id}] [{ip}] Running: {entry['prompt'][:80]}...")
 
-    input_filename = upload_image_to_comfyui(entry['image_b64'])
-    if input_filename is None:
-        job_progress[client_id] = {
-            'status': 'error', 'message': 'ComfyUI image upload failed',
-            'result': {'success': False, 'error': 'ComfyUI image upload failed'},
-            '_ts': time.time(),
-        }
-        update_ip_job_status(ip, 'error', completed_at=time.time())
-        save_job_history(job_id, client_id, ip, entry['prompt'], neg_prompt,
-                        num_steps, cfg, cfg, seed, num_images, use_lightning,
-                        entry['image_b64'][:3000], 'error',
-                        {'error': 'ComfyUI image upload failed'}, queued_at, time.time())
-        with queue_lock:
-            running_job = None
-        return
+    # Upload up to 2 images
+    image_b64_1 = entry.get('image_b64_1', '')
+    image_b64_2 = entry.get('image_b64_2', '')
+    input_filenames = []
 
-    workflow["78"]["inputs"]["image"] = input_filename
+    if image_b64_1:
+        fname1 = upload_image_to_comfyui(image_b64_1)
+        if fname1:
+            input_filenames.append(fname1)
+            # Create LoadImage node if not already in workflow
+            if "7" not in workflow:
+                workflow["7"] = {"class_type": "LoadImage", "inputs": {"image": fname1}}
+            else:
+                workflow["7"]["inputs"]["image"] = fname1
+            # Wire into TextEncodeQwenImageEditPlus nodes (3=positive, 4=negative)
+            for node_id in ("3", "4"):
+                if node_id in workflow:
+                    workflow[node_id]["inputs"]["image1"] = ["7", 0]
+
+    if image_b64_2:
+        fname2 = upload_image_to_comfyui(image_b64_2)
+        if fname2:
+            input_filenames.append(fname2)
+            if "8" not in workflow:
+                workflow["8"] = {"class_type": "LoadImage", "inputs": {"image": fname2}}
+            else:
+                workflow["8"]["inputs"]["image"] = fname2
+            for node_id in ("3", "4"):
+                if node_id in workflow:
+                    workflow[node_id]["inputs"]["image2"] = ["8", 0]
+
+    if not input_filenames:
+        _finalize_job(job_id, client_id, ip, entry['prompt'], neg_prompt,
+                      num_steps, cfg, cfg, seed, num_images, use_lightning,
+                      image_b64_1[:3000], 'error',
+                      {'error': 'ComfyUI image upload failed'}, queued_at, time.time())
+        return
 
     try:
         output_images = run_comfyui_workflow(workflow, client_id)
@@ -283,21 +511,17 @@ def _run_single_job(entry):
 
         with avg_duration_lock:
             global AVG_JOB_DURATION
-            AVG_JOB_DURATION = AVG_JOB_DURATION * 0.85 + elapsed * 0.15
+            # EMA with floor/ceiling to prevent outlier jobs from skewing the average
+            raw_avg = AVG_JOB_DURATION * 0.85 + elapsed * 0.15
+            AVG_JOB_DURATION = max(10.0, min(raw_avg, 300.0))
 
         completed_at = time.time()
 
         if not output_images:
-            job_progress[client_id] = {
-                'status': 'error', 'message': 'No output images', 'elapsed': elapsed,
-                'result': {'success': False, 'error': 'No output images', 'elapsed': elapsed},
-                '_ts': time.time(),
-            }
-            update_ip_job_status(ip, 'error', completed_at=completed_at)
-            save_job_history(job_id, client_id, ip, entry['prompt'], neg_prompt,
-                            num_steps, cfg, cfg, seed, num_images, use_lightning,
-                            entry['image_b64'][:3000], 'error',
-                            {'error': 'No output images', 'elapsed': elapsed}, queued_at, completed_at)
+            _finalize_job(job_id, client_id, ip, entry['prompt'], neg_prompt,
+                          num_steps, cfg, cfg, seed, num_images, use_lightning,
+                          image_b64_1[:3000], 'error',
+                          {'error': 'No output images', 'elapsed': elapsed}, queued_at, completed_at)
         else:
             results = []
             output_paths = []
@@ -316,37 +540,23 @@ def _run_single_job(entry):
                 'output_url': f"/outputs/{job_id}_0.png",
                 'output_paths': output_paths,
             }
-            job_progress[client_id] = {
-                'status': 'complete', 'message': f"Done in {elapsed}s",
-                'elapsed': elapsed, 'percent': 100,
-                'result': result_info,
-                '_ts': time.time(),
-            }
-            update_ip_job_status(ip, 'complete', completed_at=completed_at)
-            save_job_history(job_id, client_id, ip, entry['prompt'], neg_prompt,
-                            num_steps, cfg, cfg, seed, num_images, use_lightning,
-                            entry['image_b64'][:3000], 'complete',
-                            {'success': True, 'elapsed': elapsed, 'output_paths': output_paths},
-                            queued_at, completed_at)
+            # Pass the full result_info (with images) to _finalize_job
+            # so that job_progress contains the images for the frontend
+            _finalize_job(job_id, client_id, ip, entry['prompt'], neg_prompt,
+                          num_steps, cfg, cfg, seed, num_images, use_lightning,
+                          image_b64_1[:3000], 'complete',
+                          result_info,
+                          queued_at, completed_at)
 
     except Exception as e:
         elapsed = round(time.time() - queued_at, 1)
         completed_at = time.time()
         print(f"[{job_id}] Error after {elapsed}s: {e}")
         import traceback; traceback.print_exc()
-        job_progress[client_id] = {
-            'status': 'error', 'message': str(e), 'elapsed': elapsed,
-            'result': {'success': False, 'error': str(e), 'elapsed': elapsed},
-            '_ts': time.time(),
-        }
-        update_ip_job_status(ip, 'error', completed_at=completed_at)
-        save_job_history(job_id, client_id, ip, entry['prompt'], neg_prompt,
-                        num_steps, cfg, cfg, seed, num_images, use_lightning,
-                        entry['image_b64'][:3000], 'error',
-                        {'error': str(e), 'elapsed': elapsed}, queued_at, completed_at)
-    finally:
-        with queue_lock:
-            running_job = None
+        _finalize_job(job_id, client_id, ip, entry['prompt'], neg_prompt,
+                      num_steps, cfg, cfg, seed, num_images, use_lightning,
+                      image_b64_1[:3000], 'error',
+                      {'error': str(e), 'elapsed': elapsed}, queued_at, completed_at)
 
 
 def dispatcher_loop():
@@ -363,6 +573,7 @@ def dispatcher_loop():
 # ------------------------------------------------------------------
 
 def cleanup_loop():
+    """Periodic cleanup of stale in-memory state and old output files."""
     while True:
         time.sleep(300)
         cutoff = time.time() - 300
@@ -378,105 +589,105 @@ def cleanup_loop():
             for cid in stale_cid:
                 del job_progress[cid]
 
+        # Clean up old output PNG files (older than 7 days)
+        try:
+            cutoff_ts = time.time() - 7 * 86400  # 7 days
+            for fname in os.listdir(OUTPUT_DIR):
+                fpath = os.path.join(OUTPUT_DIR, fname)
+                if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff_ts:
+                    os.remove(fpath)
+        except Exception as e:
+            print(f"[CLEANUP] Output dir cleanup error: {e}")
+
 
 # ===================================================================
 # ComfyUI helpers
 # ===================================================================
 
-def build_workflow(input_image_name, prompt, negative_prompt, num_steps, guidance,
+def build_workflow(input_image_names, prompt, negative_prompt, num_steps, guidance,
                    cfg_scale, seed, num_images, use_lightning=True):
+    """Build ComfyUI workflow for Qwen-Rapid-AIO (single checkpoint, 2 image inputs).
+    
+    input_image_names: list of uploaded image filenames (1 or 2 images)
+    """
     if use_lightning:
         num_steps = 4
         cfg_scale = 1.0
 
+    # CheckpointLoaderSimple loads the AIO model (MODEL + CLIP + VAE in one file)
     workflow = {
-        "37": {
-            "class_type": "UNETLoader",
-            "inputs": {"unet_name": "qwen_image_edit_2511_fp8_e4m3fn.safetensors",
-                        "weight_dtype": "fp8_e4m3fn"}
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "Qwen-Rapid-AIO-NSFW-v19.safetensors"}
         },
-        "38": {
-            "class_type": "CLIPLoader",
-            "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
-                        "type": "qwen_image", "device": "default"}
-        },
-        "39": {
-            "class_type": "VAELoader",
-            "inputs": {"vae_name": "qwen_image_vae.safetensors"}
-        },
-        "78": {
+    }
+
+    # Load up to 2 input images
+    img1_name = input_image_names[0] if len(input_image_names) > 0 else ""
+    img2_name = input_image_names[1] if len(input_image_names) > 1 else ""
+
+    if img1_name:
+        workflow["7"] = {
             "class_type": "LoadImage",
-            "inputs": {"image": input_image_name}
-        },
-        "93": {
-            "class_type": "ImageScaleToTotalPixels",
-            "inputs": {"upscale_method": "lanczos", "megapixels": 1.0,
-                        "resolution_steps": 1, "image": ["78", 0]}
-        },
-        "88": {
-            "class_type": "VAEEncode",
-            "inputs": {"pixels": ["93", 0], "vae": ["39", 0]}
-        },
-        "101": {
-            "class_type": "TextEncodeQwenImageEditPlus",
-            "inputs": {"prompt": prompt, "clip": ["38", 0], "vae": ["39", 0],
-                        "image1": ["93", 0]}
-        },
-        "102": {
-            "class_type": "TextEncodeQwenImageEditPlus",
-            "inputs": {"prompt": negative_prompt, "clip": ["38", 0], "vae": ["39", 0],
-                        "image1": ["93", 0]}
-        },
-    }
-
-    if use_lightning:
-        workflow["89"] = {
-            "class_type": "LoraLoaderModelOnly",
-            "inputs": {"model": ["37", 0],
-                        "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0.safetensors",
-                        "strength_model": 1.0}
+            "inputs": {"image": img1_name}
         }
-        workflow["66"] = {
-            "class_type": "ModelSamplingAuraFlow",
-            "inputs": {"shift": 3, "model": ["89", 0]}
-        }
-    else:
-        workflow["66"] = {
-            "class_type": "ModelSamplingAuraFlow",
-            "inputs": {"shift": 3, "model": ["37", 0]}
+    if img2_name:
+        workflow["8"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": img2_name}
         }
 
-    workflow["75"] = {
-        "class_type": "CFGNorm",
-        "inputs": {"strength": 1, "model": ["66", 0]}
-    }
+    # Build image references for TextEncodeQwenImageEditPlus
+    # image1 and image2 are optional — only include if images were uploaded
+    pos_inputs = {"prompt": prompt, "clip": ["1", 1], "vae": ["1", 2]}
+    neg_inputs = {"prompt": negative_prompt, "clip": ["1", 1], "vae": ["1", 2]}
 
+    if img1_name:
+        pos_inputs["image1"] = ["7", 0]
+        neg_inputs["image1"] = ["7", 0]
+    if img2_name:
+        pos_inputs["image2"] = ["8", 0]
+        neg_inputs["image2"] = ["8", 0]
+
+    # Positive conditioning (with prompt + images)
     workflow["3"] = {
+        "class_type": "TextEncodeQwenImageEditPlus",
+        "inputs": pos_inputs
+    }
+    # Negative conditioning (blank prompt + same images)
+    workflow["4"] = {
+        "class_type": "TextEncodeQwenImageEditPlus",
+        "inputs": neg_inputs
+    }
+
+    # Empty latent (768x768) — output resolution
+    workflow["9"] = {
+        "class_type": "EmptyLatentImage",
+        "inputs": {"width": 768, "height": 768, "batch_size": num_images}
+    }
+
+    # KSampler with sa_solver + beta scheduler (Qwen-Rapid-AIO defaults)
+    workflow["2"] = {
         "class_type": "KSampler",
         "inputs": {
             "seed": seed, "steps": num_steps, "cfg": cfg_scale,
-            "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0,
-            "model": ["75", 0], "positive": ["101", 0], "negative": ["102", 0],
-            "latent_image": ["88", 0],
+            "sampler_name": "sa_solver", "scheduler": "beta", "denoise": 1.0,
+            "model": ["1", 0], "positive": ["3", 0], "negative": ["4", 0],
+            "latent_image": ["9", 0],
         }
     }
 
-    workflow["8"] = {
+    # Decode latent → image
+    workflow["5"] = {
         "class_type": "VAEDecode",
-        "inputs": {"samples": ["3", 0], "vae": ["39", 0]}
+        "inputs": {"samples": ["2", 0], "vae": ["1", 2]}
     }
 
-    workflow["60"] = {
+    # Save output
+    workflow["6"] = {
         "class_type": "SaveImage",
-        "inputs": {"images": ["8", 0], "filename_prefix": "qwen_edit"}
+        "inputs": {"images": ["5", 0], "filename_prefix": "qwen_rapid_edit"}
     }
-
-    if num_images > 1:
-        workflow["94"] = {
-            "class_type": "RepeatLatentBatch",
-            "inputs": {"samples": ["88", 0], "amount": num_images}
-        }
-        workflow["3"]["inputs"]["latent_image"] = ["94", 0]
 
     return workflow
 
@@ -530,7 +741,7 @@ def run_comfyui_workflow(workflow, client_id):
     ws.settimeout(5.0)
 
     output_images = []
-    total_steps = workflow.get("3", {}).get("inputs", {}).get("steps", 20)
+    total_steps = workflow.get("2", {}).get("inputs", {}).get("steps", 4)
     sampling_done = False
 
     job_progress[client_id] = {
@@ -563,7 +774,7 @@ def run_comfyui_workflow(workflow, client_id):
                 if msg_type == "progress_state":
                     nodes = data.get("nodes", {})
                     for nid, nstate in nodes.items():
-                        if nid == "3":
+                        if nid == "2":  # KSampler
                             value = int(nstate.get("value", 0))
                             max_val = int(nstate.get("max", total_steps))
                             pct = round(value / max_val * 100, 1) if max_val > 0 else 0
@@ -580,7 +791,7 @@ def run_comfyui_workflow(workflow, client_id):
                             job_progress[client_id].update({
                                 "status": "running", "message": f"Running node {nid}..."
                             })
-                        elif nstate.get("state") == "finished" and nid == "60":
+                        elif nstate.get("state") == "finished" and nid == "6":  # SaveImage
                             job_progress[client_id].update({
                                 "status": "saving", "message": "Saving result...", "percent": 100
                             })
@@ -591,10 +802,10 @@ def run_comfyui_workflow(workflow, client_id):
                     if node_id is None and stage == "complete":
                         time.sleep(2)
                         break
-                    elif stage == "executed" and node_id == "60":
+                    elif stage == "executed" and node_id == "6":  # SaveImage
                         time.sleep(2)
                         break
-                    elif node_id == "3":
+                    elif node_id == "2":  # KSampler
                         job_progress[client_id].update({
                             "status": "sampling", "message": "Sampling started...",
                             "step": 0, "total": total_steps,
@@ -628,6 +839,20 @@ def run_comfyui_workflow(workflow, client_id):
         ws.close()
 
     return output_images
+
+
+# ===================================================================
+# Cache Control
+# ===================================================================
+
+@app.after_request
+def add_cache_headers(response):
+    # No-cache for HTML pages (prevents stale JS issues)
+    if response.content_type and response.content_type.startswith('text/html'):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
 
 
 # ===================================================================
@@ -692,20 +917,20 @@ def _convert_dng_to_jpeg(raw_bytes, max_edge=2048):
             # Find the end of the JPEG (FF D9)
             end_idx = raw_bytes.find(b'\xff\xd9', idx + 3)
             if end_idx >= 0:
-                    jpeg_data = raw_bytes[idx:end_idx + 2]
-                    if len(jpeg_data) > 1000:  # Valid JPEG preview
-                        img = Image.open(io.BytesIO(jpeg_data))
-                        img.load()
-                        if img.mode not in ('RGB', 'RGBA'):
-                            img = img.convert('RGB')
-                        w, h = img.size
-                        if w > max_edge or h > max_edge:
-                            ratio = min(max_edge / w, max_edge / h)
-                            w, h = int(w * ratio), int(h * ratio)
-                            img = img.resize((w, h), Image.LANCZOS)
-                        buf = io.BytesIO()
-                        img.save(buf, format='JPEG', quality=95)
-                        return buf.getvalue()
+                jpeg_data = raw_bytes[idx:end_idx + 2]
+                if len(jpeg_data) > 1000:  # Valid JPEG preview
+                    img = Image.open(io.BytesIO(jpeg_data))
+                    img.load()
+                    if img.mode not in ('RGB', 'RGBA'):
+                        img = img.convert('RGB')
+                    w, h = img.size
+                    if w > max_edge or h > max_edge:
+                        ratio = min(max_edge / w, max_edge / h)
+                        w, h = int(w * ratio), int(h * ratio)
+                        img = img.resize((w, h), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    img.save(buf, format='JPEG', quality=95)
+                    return buf.getvalue()
     except Exception:
         pass
 
@@ -729,8 +954,7 @@ def convert_image():
 
     try:
         if ext in ('heic', 'heif', 'heics', 'heifs'):
-            # Use pillow-heif for HEIC/HEIF
-            import pillow_heif
+            # Use pillow-heif for HEIC/HEIF (already imported at module level)
             heif_file = pillow_heif.read_heif(io.BytesIO(raw_bytes))
             img = heif_file.to_pillow()
             if img.mode not in ('RGB', 'RGBA'):
@@ -869,11 +1093,9 @@ def my_history_endpoint():
 def history_job_endpoint(job_id):
     """Get a single job's history record. Full detail only for the originating IP."""
     client_ip = get_client_ip()
-    path = os.path.join(HISTORY_DIR, f"{job_id}.json")
-    if not os.path.isfile(path):
+    record = get_job_history(job_id)
+    if not record:
         return jsonify({"error": "Not found"}), 404
-    with open(path) as f:
-        record = json.load(f)
     # If IP matches, return full record; otherwise strip sensitive fields
     if record.get('ip') != client_ip:
         record.pop('settings', None)
@@ -943,11 +1165,15 @@ def edit_image():
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
 
-    image_b64 = data.get("image_base64", "")
-    if image_b64 and "," in image_b64:
-        image_b64 = image_b64.split(",", 1)[1]
-    if not image_b64:
-        return jsonify({"error": "Image is required"}), 400
+    # Accept up to 2 images
+    image_b64_1 = data.get("image_base64", "")
+    image_b64_2 = data.get("image_base64_2", "")
+    if image_b64_1 and "," in image_b64_1:
+        image_b64_1 = image_b64_1.split(",", 1)[1]
+    if image_b64_2 and "," in image_b64_2:
+        image_b64_2 = image_b64_2.split(",", 1)[1]
+    if not image_b64_1:
+        return jsonify({"error": "At least one image is required"}), 400
 
     client_ip = get_client_ip()
     fn = data.get("force_new", "false"); force_new = fn if isinstance(fn, bool) else str(fn).lower() == "true"
@@ -988,12 +1214,12 @@ def edit_image():
     client_id = str(uuid.uuid4())
 
     workflow = build_workflow(
-        "placeholder.png", prompt, negative_prompt,
+        [], prompt, negative_prompt,
         num_inference_steps, guidance_scale, true_cfg_scale, seed, num_images,
         use_lightning,
     )
 
-    pos = enqueue_job(client_ip, client_id, job_id, prompt, workflow, image_b64)
+    pos = enqueue_job(client_ip, client_id, job_id, prompt, workflow, image_b64_1, image_b64_2)
     snap = get_queue_snapshot(client_ip)
 
     print(f"[{job_id}] [{client_ip}] Queued (pos={pos}): {prompt[:80]}...")
@@ -1020,6 +1246,205 @@ def serve_history_file(filename):
     return send_from_directory(HISTORY_DIR, filename)
 
 
+@app.route("/archive/<path:filepath>")
+def serve_archive(filepath):
+    """Serve archived job files (input.png, output_*.png, metadata.json)."""
+    # filepath is like "<job_id>/input.png" or "<job_id>/metadata.json"
+    parts = filepath.rsplit('/', 1)
+    if len(parts) == 2:
+        job_id, filename = parts
+        job_dir = os.path.join(ARCHIVE_DIR, job_id)
+        return send_from_directory(job_dir, filename)
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.route("/api/archive", methods=["GET"])
+def archive_list():
+    """List all archived jobs (summary only)."""
+    records = []
+    if not os.path.isdir(ARCHIVE_DIR):
+        return jsonify({"count": 0, "records": records})
+    for job_id in sorted(os.listdir(ARCHIVE_DIR), reverse=True):
+        meta_path = os.path.join(ARCHIVE_DIR, job_id, 'metadata.json')
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                records.append({
+                    'job_id': meta.get('job_id'),
+                    'prompt': meta.get('prompt', '')[:100],
+                    'status': meta.get('status'),
+                    'elapsed': meta.get('elapsed'),
+                    'completed_at': meta.get('completed_at'),
+                })
+            except Exception:
+                pass
+    return jsonify({"count": len(records), "records": records})
+
+
+# ===================================================================
+# Persistent Intelligence / Memory API Endpoints
+# ===================================================================
+
+@app.route("/api/memory/suggestions", methods=["GET"])
+def memory_suggestions():
+    """Get personalized prompt suggestions based on user history + trending."""
+    client_ip = get_client_ip()
+    limit = int(request.args.get('limit', 8))
+    suggestions = get_suggestions_for_ip(client_ip, limit)
+    return jsonify({"ip": client_ip, "count": len(suggestions), "suggestions": suggestions})
+
+
+@app.route("/api/memory/preferences", methods=["GET"])
+def memory_preferences():
+    """Get learned user preferences."""
+    client_ip = get_client_ip()
+    prefs = get_user_preferences(client_ip)
+    return jsonify({"ip": client_ip, "preferences": prefs})
+
+
+@app.route("/api/memory/trending", methods=["GET"])
+def memory_trending():
+    """Get trending prompts across all users."""
+    limit = int(request.args.get('limit', 10))
+    trending = get_trending_prompts(limit)
+    return jsonify({"count": len(trending), "trending": trending})
+
+
+@app.route("/api/memory/stats", methods=["GET"])
+def memory_stats():
+    """Get overall memory system statistics."""
+    stats = get_memory_stats()
+    return jsonify(stats)
+
+
+@app.route("/api/memory/insights", methods=["GET"])
+def memory_insights():
+    """Get recent system-generated insights."""
+    limit = int(request.args.get('limit', 5))
+    insights = get_recent_insights(limit)
+    return jsonify({"count": len(insights), "insights": insights})
+
+
+@app.route("/api/memory/settings", methods=["GET"])
+def memory_smart_settings():
+    """Get smart default settings based on learned preferences."""
+    client_ip = get_client_ip()
+    settings = get_smart_default_settings(client_ip)
+    return jsonify({"ip": client_ip, "settings": settings})
+
+
+@app.route("/api/memory/search", methods=["GET"])
+def memory_search():
+    """Search memory for similar prompts."""
+    query = request.args.get('q', '')
+    limit = int(request.args.get('limit', 10))
+    results = search_memory(query, limit)
+    return jsonify({"query": query, "count": len(results), "results": results})
+
+
+@app.route("/api/memory/enhance", methods=["POST"])
+def memory_enhance():
+    """Enhance a prompt based on learned knowledge."""
+    data = request.get_json() or {}
+    prompt = data.get('prompt', '')
+    client_ip = get_client_ip()
+    enhanced = enhance_prompt(prompt, client_ip)
+    categories = categorize_prompt(prompt)
+    return jsonify({
+        'original': prompt,
+        'enhanced': enhanced,
+        'categories': categories,
+        'was_enhanced': enhanced != prompt,
+    })
+
+
+# ===================================================================
+# STT (Speech-to-Text) Endpoint
+# ===================================================================
+
+def _cleanup_stale_temp_files():
+    """Remove orphaned temp audio files from crashed sessions (runs at startup)."""
+    temp_dir = tempfile.gettempdir()  # Cross-platform: /tmp on Linux, %TEMP% on Windows
+    patterns = [
+        os.path.join(temp_dir, "recording.*.webm"),
+        os.path.join(temp_dir, "recording.*.mp4"),
+        os.path.join(temp_dir, "tmp*.webm"),
+        os.path.join(temp_dir, "tmp*.mp4"),
+    ]
+    for pattern in patterns:
+        for f in glob.glob(pattern):
+            try:
+                age = time.time() - os.path.getmtime(f)
+                if age > 3600:  # Only delete files older than 1 hour
+                    os.unlink(f)
+            except OSError:
+                pass
+
+
+@app.before_request
+def _stt_startup_cleanup():
+    """Run temp file cleanup once on first request."""
+    if not hasattr(_stt_startup_cleanup, "_done"):
+        _stt_startup_cleanup._done = True
+        _cleanup_stale_temp_files()
+
+
+@app.route("/api/transcribe", methods=["POST"])
+def transcribe_audio():
+    """Accept an audio file, return transcription text.
+    Accepts: audio file via FormData ('audio' key) or base64 in JSON.
+    Optional: 'language' (e.g. 'en', 'zh'). None = auto-detect.
+    """
+    from stt_engine import transcribe as stt_transcribe
+    tmp_path = None  # Pre-declare to prevent UnboundLocalError in finally block
+    data = None      # Pre-declare to prevent UnboundLocalError in language parsing
+
+    try:
+        audio_file = request.files.get("audio")
+        if audio_file:
+            filename = audio_file.filename or "recording.audio"
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
+            tmp.close()  # Release OS file descriptor lock; path string remains valid
+            audio_file.save(tmp.name)
+            tmp_path = tmp.name
+        elif request.is_json:
+            data = request.get_json() or {}
+            audio_b64 = data.get("audio_base64", "")
+            if audio_b64 and "," in audio_b64:
+                audio_b64 = audio_b64.split(",", 1)[1]
+            if not audio_b64:
+                return jsonify({"error": "No audio provided"}), 400
+            raw = base64.b64decode(audio_b64)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
+            tmp.write(raw)
+            tmp.flush()  # Ensure buffer is written to disk
+            tmp.close()  # Release OS file descriptor lock
+            tmp_path = tmp.name
+        else:
+            return jsonify({"error": "No audio file provided"}), 400
+
+        language = request.form.get("language") if not request.is_json else data.get("language")
+        if language and language in ("auto", ""):
+            language = None
+
+        text = stt_transcribe(tmp_path, language=language)
+        return jsonify({"success": True, "text": text})
+
+    except Exception as e:
+        print(f"[STT] Transcription error: {e}")
+        import traceback; traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 # ===================================================================
 # Main
 # ===================================================================
@@ -1027,15 +1452,25 @@ def serve_history_file(filename):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     host = os.environ.get("HOST", "0.0.0.0")
+    cert_file = os.environ.get("SSL_CERT", "")
+    key_file = os.environ.get("SSL_KEY", "")
 
-    print(f"\n{'='*60}")
-    print(f"  Qwen-Image-Edit-2511 Web Server (ComfyUI Backend)")
-    print(f"  ComfyUI: {COMFYUI_URL}")
-    print(f"{'='*60}")
-    print(f"\n  Global FIFO queue enabled — one job at a time")
-    print(f"  Session history: {HISTORY_DIR}")
-    print(f"  ETA estimation: /api/queue endpoint\n")
+    # Auto-detect SSL certs if not specified
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if not cert_file:
+        # Look for *.pem files in the script directory
+        pem_files = sorted(glob.glob(os.path.join(script_dir, "*.pem")))
+        if len(pem_files) >= 2:
+            # Usually the +3-key.pem is the key, the other is the cert
+            key_files = [f for f in pem_files if "key" in os.path.basename(f).lower()]
+            cert_files = [f for f in pem_files if "key" not in os.path.basename(f).lower()]
+            if key_files and cert_files:
+                key_file = key_files[0]
+                cert_file = cert_files[0]
 
+    use_https = bool(cert_file) and os.path.exists(cert_file)
+
+    # Always start dispatcher and cleanup threads
     disp_thread = threading.Thread(target=dispatcher_loop, daemon=True, name="dispatcher")
     disp_thread.start()
     print("[OK] Dispatcher thread started")
@@ -1044,6 +1479,45 @@ if __name__ == "__main__":
     clean_thread.start()
     print("[OK] Cleanup thread started")
 
-    print(f"\nStarting server on http://{host}:{port}")
-    print(f"Open this URL on your phone or browser to begin.\n")
-    app.run(host=host, port=port, threaded=True, debug=False)
+    if use_https:
+        # Also try without key if only cert exists (combined cert)
+        if not key_file or not os.path.exists(key_file):
+            key_file = cert_file  # Use same file
+        ssl_context = (cert_file, key_file) if key_file != cert_file else cert_file
+
+        # Also listen on HTTP (port-1) for convenience
+        http_port = port - 1
+        http_thread = threading.Thread(target=lambda: app.run(host=host, port=http_port, threaded=True, debug=False), daemon=True)
+        http_thread.start()
+
+        print(f"\n{'='*60}")
+        print(f"  Qwen-Image-Edit-2511 Web Server (ComfyUI Backend)")
+        print(f"  ComfyUI: {COMFYUI_URL}")
+        print(f"  HTTPS: Enabled (cert={cert_file})")
+        print(f"{'='*60}")
+        print(f"\n  Global FIFO queue enabled — one job at a time")
+        print(f"  Session history: {HISTORY_DIR}")
+        print(f"  Archive (permanent): {ARCHIVE_DIR}")
+        print(f"  Persistent Intelligence: memory.db (self-learning)")
+        print(f"  ETA estimation: /api/queue endpoint")
+        print(f"  Memory APIs: /api/memory/{{suggestions,preferences,trending,stats,insights,settings,search,enhance}}\n")
+
+        print(f"\nStarting server on https://{host}:{port}")
+        print(f"Also available on http://{host}:{http_port}")
+        print(f"Open this URL on your phone or browser to begin.\n")
+        app.run(host=host, port=port, threaded=True, debug=False, ssl_context=ssl_context)
+    else:
+        print(f"\n{'='*60}")
+        print(f"  Qwen-Image-Edit-2511 Web Server (ComfyUI Backend)")
+        print(f"  ComfyUI: {COMFYUI_URL}")
+        print(f"{'='*60}")
+        print(f"\n  Global FIFO queue enabled — one job at a time")
+        print(f"  Session history: {HISTORY_DIR}")
+        print(f"  Archive (permanent): {ARCHIVE_DIR}")
+        print(f"  Persistent Intelligence: memory.db (self-learning)")
+        print(f"  ETA estimation: /api/queue endpoint")
+        print(f"  Memory APIs: /api/memory/{{suggestions,preferences,trending,stats,insights,settings,search,enhance}}\n")
+
+        print(f"\nStarting server on http://{host}:{port}")
+        print(f"Open this URL on your phone or browser to begin.\n")
+        app.run(host=host, port=port, threaded=True, debug=False)
