@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Qwen Image Edit</title>
+    <title>Qwen Rapid AIO</title>
     <style>
         :root {
             --bg: #0f0f13;
@@ -168,6 +168,15 @@
             padding: 12px;
             min-height: auto;
         }
+        .drop-label {
+            position: absolute;
+            top: 8px;
+            left: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent2);
+            z-index: 5;
+        }
         .drop-icon { font-size: 2.2rem; margin-bottom: 8px; }
         .drop-text { color: var(--text2); font-size: 0.9rem; }
         .drop-text strong { color: var(--accent2); }
@@ -193,7 +202,7 @@
             transition: opacity 0.2s;
         }
         .drop-zone:hover .preview-overlay { opacity: 1; }
-        #file-input { display: none; }
+        #file-input, #file-input-2 { display: none; }
 
         /* Prompt */
         .prompt-section { margin-top: 16px; }
@@ -556,6 +565,36 @@
             white-space: nowrap;
         }
         .example-chip:hover { border-color: var(--accent); color: var(--accent2); }
+
+        /* Prompt Guide */
+        .prompt-guide {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 12px;
+        }
+        .prompt-guide-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .prompt-guide-section {
+            margin-bottom: 10px;
+        }
+        .prompt-guide-section:last-child {
+            margin-bottom: 0;
+        }
+        .prompt-guide-section-title {
+            font-size: 0.82rem;
+            font-weight: 500;
+            color: var(--text2);
+            margin-bottom: 6px;
+        }
 
         /* Spinner */
         .spinner {
@@ -954,7 +993,7 @@
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1 data-i18n="title">✦ Qwen Image Edit</h1>
+            <h1 data-i18n="title">✦ Qwen Rapid AIO</h1>
             <p data-i18n="subtitle">Upload an image, describe the edit, and let AI do the rest</p>
             <div class="status-bar">
                 <span class="status-dot" id="status-dot"></span>
@@ -962,8 +1001,9 @@
             </div>
         </div>
 
-        <!-- Image Upload -->
+        <!-- Image Upload 1 -->
         <div class="drop-zone" id="drop-zone">
+            <div class="drop-label">Image 1 <span style="font-size:0.75rem;opacity:0.5">(required)</span></div>
             <div class="drop-icon">🖼️</div>
             <div class="drop-text">
                 <strong data-i18n="upload_tap">Tap to upload</strong> <span data-i18n="upload_or">or drag &amp; drop</span><br>
@@ -972,6 +1012,19 @@
             <img class="preview-img" id="preview-img" style="display:none">
             <div class="preview-overlay" id="remove-btn" style="display:none" title="Remove image">✕</div>
             <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,image/tiff,image/bmp,.heic,.heif,.dng,.tif,.tiff,.bmp">
+        </div>
+
+        <!-- Image Upload 2 -->
+        <div class="drop-zone" id="drop-zone-2">
+            <div class="drop-label">Image 2 <span style="font-size:0.75rem;opacity:0.5">(optional)</span></div>
+            <div class="drop-icon">🖼️</div>
+            <div class="drop-text">
+                <strong data-i18n="upload_tap">Tap to upload</strong> <span data-i18n="upload_or">or drag &amp; drop</span><br>
+                <span style="font-size:0.8rem;opacity:0.7" data-i18n="upload_formats">PNG, JPG, WEBP, HEIC, HEIF, DNG, TIFF, BMP</span>
+            </div>
+            <img class="preview-img" id="preview-img-2" style="display:none">
+            <div class="preview-overlay" id="remove-btn-2" style="display:none" title="Remove image">✕</div>
+            <input type="file" id="file-input-2" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,image/tiff,image/bmp,.heic,.heif,.dng,.tif,.tiff,.bmp">
         </div>
 
         <!-- Prompt -->
@@ -1019,6 +1072,83 @@
                     <input type="checkbox" id="use_lightning" checked>
                     <span class="toggle-slider"></span>
                 </label>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label" data-i18n="setting_face_swap">🎭 Face Swap (BFS Head V5)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="use_face_swap">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Prompt Guide Toggle (Collapsible) -->
+        <span class="advanced-toggle" id="prompt-guide-toggle" data-i18n="prompt_guide_toggle">📝 Prompt Guide/提示词</span>
+        <div class="advanced-wrap" id="prompt-guide-wrap">
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_consistency">🔑 Consistency Keywords (一致性关键词)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="Keep everything else unchanged" data-prompt-zh="保持其他一切不变">Keep everything else unchanged</span>
+                    <span class="example-chip" data-prompt="Preserve original style" data-prompt-zh="保留原始风格">Preserve original style</span>
+                    <span class="example-chip" data-prompt="Maintain lighting and perspective" data-prompt-zh="保持光照和透视">Maintain lighting & perspective</span>
+                    <span class="example-chip" data-prompt="No distortion, no warped text" data-prompt-zh="无失真，无扭曲文字">No distortion</span>
+                </div>
+            </div>
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_quality">✨ Quality Keywords (质量关键词)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="high quality, sharp details, 4k" data-prompt-zh="高质量，清晰细节，4k">High quality, 4k</span>
+                    <span class="example-chip" data-prompt="photorealistic, professional" data-prompt-zh="照片级真实，专业">Photorealistic</span>
+                    <span class="example-chip" data-prompt="clean edges, smooth blending" data-prompt-zh="清晰边缘，平滑融合">Clean edges</span>
+                </div>
+            </div>
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_identity">🧍 Identity Control (身份控制)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="Preserve face/clothing features" data-prompt-zh="保留面部/服装特征">Preserve identity</span>
+                    <span class="example-chip" data-prompt="Keep hairstyle, clothing, and facial features identical" data-prompt-zh="保持发型、服装和面部特征相同">Keep identical</span>
+                    <span class="example-chip" data-prompt="Preserve hair, eye color, nose structure" data-prompt-zh="保留头发、眼睛颜色、鼻子结构">Preserve features</span>
+                </div>
+            </div>
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_text">📝 Text Edits (文字编辑)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="Replace text with '[TEXT]'. Keep original font, size, color, and perspective. Do not alter background." data-prompt-zh="替换文字为'[文字]'. 保持原始字体、大小、颜色和透视。不改变背景。">Replace text</span>
+                    <span class="example-chip" data-prompt="Correct spelling. Preserve font family, color, and alignment." data-prompt-zh="纠正拼写。保留字体、颜色和排版。">Fix spelling</span>
+                    <span class="example-chip" data-prompt="Preserve font, size, and alignment" data-prompt-zh="保留字体、大小和排版">Preserve font</span>
+                </div>
+            </div>
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_object">🎯 Object Edits (物体编辑)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="Remove [OBJECT]. Keep shadows, reflections, and texture consistent." data-prompt-zh="移除[物体]. 保持阴影、反射和纹理一致。">Remove object</span>
+                    <span class="example-chip" data-prompt="Replace [OBJECT] with [NEW]. Keep pose, lighting, and background unchanged." data-prompt-zh="替换[物体]为[新]. 保持姿势、光照和背景不变。">Replace object</span>
+                    <span class="example-chip" data-prompt="Add [OBJECT]. Match style and lighting of the scene." data-prompt-zh="添加[物体]. 匹配场景风格和光照。">Add object</span>
+                </div>
+            </div>
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_lighting">📷 Lighting & Camera (光照和相机)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="Relight with warm key light from right, cool rim light from back. Keep pose unchanged." data-prompt-zh="用右侧暖色主光、后方冷色轮廓光照亮。保持姿势不变。">Relight scene</span>
+                    <span class="example-chip" data-prompt="Render with 35mm lens, shallow depth of field, focus on face. Preserve environment blur." data-prompt-zh="用35mm镜头渲染，浅景深，聚焦面部。保留环境模糊。">35mm lens</span>
+                    <span class="example-chip" data-prompt="natural lighting" data-prompt-zh="自然光照">Natural lighting</span>
+                </div>
+            </div>
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_negative">🚫 Negative Keywords (负面关键词)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="no distortion, no warped text, no duplicate faces" data-prompt-zh="无失真，无扭曲文字，无重复面孔">No distortion</span>
+                    <span class="example-chip" data-prompt="no extra limbs, no blurry text, no unnatural colors" data-prompt-zh="无多余肢体，无模糊文字，无不自然颜色">No artifacts</span>
+                    <span class="example-chip" data-prompt="bad quality, noise, blurry, worst quality, low resolution" data-prompt-zh="低质量，噪点，模糊，最差质量，低分辨率">Bad quality</span>
+                </div>
+            </div>
+            <div class="prompt-guide-section">
+                <div class="prompt-guide-section-title" data-i18n="pg_tips">💡 Pro Tips (专业技巧)</div>
+                <div class="example-chips">
+                    <span class="example-chip" data-prompt="Always add 'Keep everything else unchanged' → avoids drift" data-prompt-zh="始终添加'保持其他一切不变' → 避免漂移">Avoid drift</span>
+                    <span class="example-chip" data-prompt="Don't overload one edit. Chain 2-3 smaller edits instead." data-prompt-zh="不要一次编辑太多。链式2-3个小编辑。">Chain edits</span>
+                    <span class="example-chip" data-prompt="Use negatives → 'no distortion, no warped text'" data-prompt-zh="使用负面词 → '无失真，无扭曲文字'">Use negatives</span>
+                </div>
             </div>
         </div>
 
@@ -1179,8 +1309,8 @@
         // ==================== i18n ====================
         const i18n = {
             en: {
-                title: "✦ Qwen Image Edit",
-                subtitle: "Upload an image, describe the edit, and let AI do the rest",
+                title: "✦ Qwen Rapid AIO",
+                subtitle: "Upload up to 2 images, describe the edit, and let AI do the rest",
                 status_checking: "Checking server...",
                 status_ready: (gpu, mem) => 'Model ready • ' + gpu + (mem ? ' (' + mem + 'GB)' : ''),
                 status_loading: "Model loading on first request...",
@@ -1194,6 +1324,7 @@
                 neg_prompt_open: "− Negative Prompt",
                 neg_prompt_placeholder: "Things to avoid... (e.g. blurry, low quality)",
                 adv_toggle: "⚙ Advanced Settings",
+                prompt_guide_toggle: "📝 Prompt Guide/提示词",
                 setting_steps: "Inference Steps",
                 setting_guidance: "Guidance Scale",
                 setting_cfg: "True CFG Scale",
@@ -1201,6 +1332,7 @@
                 btn_random_seed: "🎲",
                 setting_num_images: "Num Images",
                 setting_lightning: "⚡ Lightning (4-step)",
+                setting_face_swap: "🎭 Face Swap (BFS Head V5)",
                 btn_generate: "✨ Generate Edit",
                 btn_generating: "Generating...",
                 progress_text: "Processing... this may take 30-90s on first run",
@@ -1278,10 +1410,19 @@
                 mic_recording: "Recording...",
                 mic_hint: "Tap 🎤 to speak your edit prompt",
                 mic_max_time: "Max recording time (30s) reached",
+                // Prompt Guide section titles
+                pg_consistency: "🔑 Consistency Keywords",
+                pg_quality: "✨ Quality Keywords",
+                pg_identity: "🧍 Identity Control",
+                pg_text: "📝 Text Edits",
+                pg_object: "🎯 Object Edits",
+                pg_lighting: "📷 Lighting & Camera",
+                pg_negative: "🚫 Negative Keywords",
+                pg_tips: "💡 Pro Tips",
             },
             zh: {
-                title: "✦ Qwen 图像编辑",
-                subtitle: "上传一张图片，描述编辑效果，让 AI 帮你完成",
+                title: "千问快速修图",
+                subtitle: "上传最多2张图片，描述编辑效果，让 AI 帮你完成",
                 status_checking: "正在检查服务器...",
                 status_ready: (gpu, mem) => '模型就绪 • ' + gpu + (mem ? ' (' + mem + 'GB)' : ''),
                 status_loading: "首次请求时将加载模型...",
@@ -1295,6 +1436,7 @@
                 neg_prompt_open: "− 反向提示词",
                 neg_prompt_placeholder: "需要避免的内容...（例如：模糊、低质量）",
                 adv_toggle: "⚙ 高级设置",
+                prompt_guide_toggle: "📝 提示词指南/关键词",
                 setting_steps: "推理步数",
                 setting_guidance: "引导系数",
                 setting_cfg: "True CFG 系数",
@@ -1302,6 +1444,7 @@
                 btn_random_seed: "🎲",
                 setting_num_images: "生成数量",
                 setting_lightning: "⚡ Lightning (4步加速)",
+                setting_face_swap: "🎭 面部替换 (BFS Head V5)",
                 btn_generate: "✨ 开始编辑",
                 btn_generating: "生成中...",
                 progress_text: "处理中... 首次运行可能需要 30-90 秒",
@@ -1379,6 +1522,15 @@
                 mic_recording: "录音中...",
                 mic_hint: "点击 🎤 语音输入编辑提示词",
                 mic_max_time: "最长录音时间 (30s) 已到",
+                // Prompt Guide section titles
+                pg_consistency: "🔑 一致性关键词",
+                pg_quality: "✨ 质量关键词",
+                pg_identity: "🧍 身份控制",
+                pg_text: "📝 文字编辑",
+                pg_object: "🎯 物体编辑",
+                pg_lighting: "📷 光照和相机",
+                pg_negative: "🚫 负面关键词",
+                pg_tips: "💡 专业技巧",
             }
         };
 
@@ -1412,6 +1564,10 @@
             if (btnText && btnText.textContent !== t('btn_generating')) {
                 btnText.textContent = t('btn_generate');
             }
+            // Update prompt guide chips to show correct language
+            document.querySelectorAll('#prompt-guide-wrap .example-chip').forEach(chip => {
+                chip.textContent = currentLang === 'zh' ? chip.dataset.promptZh : chip.dataset.prompt;
+            });
             localStorage.setItem('qwen_lang', currentLang);
         }
 
@@ -1426,6 +1582,8 @@
 
         let selectedFile = null;
         let selectedImageData = null;
+        let selectedFile2 = null;
+        let selectedImageData2 = null;
         let isGenerating = false;
         let currentJobId = null;
         let myIP = null;
@@ -1440,6 +1598,10 @@
         const fileInput = document.getElementById('file-input');
         const previewImg = document.getElementById('preview-img');
         const removeBtn = document.getElementById('remove-btn');
+        const dropZone2 = document.getElementById('drop-zone-2');
+        const fileInput2 = document.getElementById('file-input-2');
+        const previewImg2 = document.getElementById('preview-img-2');
+        const removeBtn2 = document.getElementById('remove-btn-2');
         const promptEl = document.getElementById('prompt');
         const negToggle = document.getElementById('neg-toggle');
         const negWrap = document.getElementById('neg-wrap');
@@ -1586,14 +1748,109 @@
         fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
         removeBtn.addEventListener('click', (e) => { e.stopPropagation(); clearImage(); });
 
-        // Restore uploaded image from sessionStorage FIRST (before anything else)
+        // ==================== Image Upload 2 ====================
+
+        function showImagePreview2(dataUrl) {
+            previewImg2.src = dataUrl;
+            previewImg2.style.display = 'block';
+            removeBtn2.style.display = 'flex';
+            dropZone2.classList.add('has-image');
+            const dropIcon = dropZone2.querySelector('.drop-icon');
+            const dropTextEl = dropZone2.querySelector('.drop-text');
+            if (dropIcon) dropIcon.style.display = 'none';
+            if (dropTextEl) dropTextEl.style.display = 'none';
+        }
+
+        function clearImage2() {
+            selectedFile2 = null;
+            selectedImageData2 = null;
+            try { sessionStorage.removeItem('qwen_uploaded_image_2'); } catch(e) {}
+            previewImg2.style.display = 'none';
+            previewImg2.src = '';
+            removeBtn2.style.display = 'none';
+            const dropIcon = dropZone2.querySelector('.drop-icon');
+            const dropTextEl = dropZone2.querySelector('.drop-text');
+            if (dropIcon) dropIcon.style.display = '';
+            if (dropTextEl) dropTextEl.style.display = '';
+            dropZone2.classList.remove('has-image');
+            fileInput2.value = '';
+        }
+
+        function handleFile2(file) {
+            const ext = (file.name || '').split('.').pop().toLowerCase();
+            const needsConvert = ['heic', 'heif', 'dng', 'heics', 'heifs'].includes(ext);
+            if (needsConvert) {
+                handleFileConvert2(file);
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const maxEdge = 2048;
+                    let w = img.width, h = img.height;
+                    if (w > maxEdge || h > maxEdge) {
+                        if (w >= h) { h = Math.round(h * maxEdge / w); w = maxEdge; }
+                        else       { w = Math.round(w * maxEdge / h); h = maxEdge; }
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    selectedImageData2 = canvas.toDataURL('image/jpeg', 0.85);
+                    try { sessionStorage.setItem('qwen_uploaded_image_2', selectedImageData2); } catch(e) {}
+                    showImagePreview2(selectedImageData2);
+                };
+                img.onerror = () => { handleFileConvert2(file); };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function handleFileConvert2(file) {
+            selectedFile2 = file;
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const res = await fetch('/api/convert-image', { method: 'POST', body: formData });
+                const data = await res.json();
+                if (data.success && data.image) {
+                    selectedImageData2 = data.image;
+                    try { sessionStorage.setItem('qwen_uploaded_image_2', selectedImageData2); } catch(e) {}
+                    showImagePreview2(selectedImageData2);
+                } else {
+                    showError(data.error || 'Image conversion failed');
+                }
+            } catch (e) {
+                showError('Conversion error: ' + e.message);
+            }
+        }
+
+        dropZone2.addEventListener('click', () => fileInput2.click());
+        dropZone2.addEventListener('dragover', (e) => { e.preventDefault(); dropZone2.classList.add('dragover'); });
+        dropZone2.addEventListener('dragleave', () => dropZone2.classList.remove('dragover'));
+        dropZone2.addEventListener('drop', (e) => {
+            e.preventDefault(); dropZone2.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length) handleFile2(files[0]);
+        });
+        fileInput2.addEventListener('change', (e) => { if (e.target.files.length) handleFile2(e.target.files[0]); });
+        removeBtn2.addEventListener('click', (e) => { e.stopPropagation(); clearImage2(); });
+
+        // Restore uploaded images from sessionStorage FIRST (before anything else)
         (function restoreUploadedImage() {
             try {
                 const saved = sessionStorage.getItem('qwen_uploaded_image');
                 if (saved) {
                     selectedImageData = saved;
                     showImagePreview(saved);
-                    console.log('[RESTORE] Image restored from sessionStorage');
+                    console.log('[RESTORE] Image 1 restored from sessionStorage');
+                }
+                const saved2 = sessionStorage.getItem('qwen_uploaded_image_2');
+                if (saved2) {
+                    selectedImageData2 = saved2;
+                    showImagePreview2(saved2);
+                    console.log('[RESTORE] Image 2 restored from sessionStorage');
                 }
             } catch(e) { console.log('[RESTORE] Error:', e); }
         })();
@@ -1615,21 +1872,46 @@
         });
 
         const lightningToggle = document.getElementById('use_lightning');
+        const faceSwapToggle = document.getElementById('use_face_swap');
         const stepsInput = document.getElementById('steps');
         const cfgInput = document.getElementById('true_cfg');
         lightningToggle.addEventListener('change', () => {
             if (lightningToggle.checked) {
                 stepsInput.value = 4; cfgInput.value = '1.0';
-            } else {
+            } else if (!faceSwapToggle.checked) {
                 stepsInput.value = '20'; cfgInput.value = '4.0';
+            }
+        });
+        faceSwapToggle.addEventListener('change', () => {
+            if (faceSwapToggle.checked) {
+                // Auto-set head swap prompt
+                promptEl.value = currentLang === 'zh' ?
+                    'head_swap: 以图片1为基础，保持其光照、环境和背景。完全移除图片1的头部，替换为图片2的头部，严格保留图片2的头发、眼睛颜色、鼻子结构。复制图片1的眼睛方向、头部旋转、微表情，高质量，清晰细节，4k' :
+                    'head_swap: start with Picture 1 as the base image, keeping its lighting, environment, and background. remove the head from Picture 1 completely and replace it with the head from Picture 2, strictly preserving the hair, eye color, nose structure of Picture 2. copy the direction of the eye, head rotation, micro expressions from Picture 1, high quality, sharp details, 4k';
+                // Adjust settings for face swap
+                stepsInput.value = 20; cfgInput.value = '2.5';
+                lightningToggle.checked = false;
             }
         });
 
         document.querySelectorAll('.example-chip').forEach(chip => {
             chip.addEventListener('click', () => {
-                promptEl.value = currentLang === 'zh' ? chip.dataset.promptZh : chip.dataset.prompt;
+                const text = currentLang === 'zh' ? chip.dataset.promptZh : chip.dataset.prompt;
+                // Additive: append to existing prompt with comma separator
+                if (promptEl.value.trim()) {
+                    promptEl.value += ', ' + text;
+                } else {
+                    promptEl.value = text;
+                }
                 promptEl.focus();
             });
+        });
+
+        // Prompt Guide Toggle (collapsible like advanced settings)
+        const promptGuideToggle = document.getElementById('prompt-guide-toggle');
+        const promptGuideWrap = document.getElementById('prompt-guide-wrap');
+        promptGuideToggle.addEventListener('click', () => {
+            promptGuideWrap.classList.toggle('visible');
         });
 
         // ==================== Auto-resume ====================
@@ -1794,6 +2076,7 @@
             // Build payload as JSON (FormData breaks on iOS Safari with large base64 strings)
             const payload = {
                 image_base64: selectedImageData,
+                image_base64_2: selectedImageData2 || '',
                 prompt: prompt,
                 negative_prompt: negPrompt.value.trim() || '',
                 num_inference_steps: parseInt(document.getElementById('steps').value) || 20,
@@ -1802,6 +2085,7 @@
                 seed: parseInt(document.getElementById('seed').value) || 0,
                 num_images: parseInt(document.getElementById('num_images').value) || 1,
                 use_lightning: document.getElementById('use_lightning').checked,
+                use_face_swap: document.getElementById('use_face_swap').checked,
             };
 
             try {
@@ -1869,6 +2153,8 @@
         btnNew.addEventListener('click', () => {
             resultSection.classList.remove('visible');
             promptEl.value = '';
+            clearImage();
+            clearImage2();
             promptEl.focus();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });

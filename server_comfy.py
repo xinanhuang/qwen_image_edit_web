@@ -472,31 +472,73 @@ def _run_single_job(entry):
     image_b64_2 = entry.get('image_b64_2', '')
     input_filenames = []
 
+    orig_width, orig_height = 1024, 1024  # default
+    target_size = 1024  # Qwen Image Edit prefers square inputs
+
     if image_b64_1:
-        fname1 = upload_image_to_comfyui(image_b64_1)
+        fname1, w1, h1 = upload_image_to_comfyui(image_b64_1)
         if fname1:
             input_filenames.append(fname1)
+            orig_width, orig_height = w1, h1  # store original dimensions
             # Create LoadImage node if not already in workflow
             if "7" not in workflow:
                 workflow["7"] = {"class_type": "LoadImage", "inputs": {"image": fname1}}
             else:
                 workflow["7"]["inputs"]["image"] = fname1
-            # Wire into TextEncodeQwenImageEditPlus nodes (3=positive, 4=negative)
+            # Add padding node to make input square (1024x1024)
+            workflow["70"] = {
+                "class_type": "ResizeAndPadImage",
+                "inputs": {"image": ["7", 0], "target_width": target_size,
+                            "target_height": target_size, "padding_color": "black",
+                            "interpolation": "lanczos"}
+            }
+            # Wire padded image into TextEncodeQwenImageEditPlus nodes (3=positive, 4=negative)
             for node_id in ("3", "4"):
                 if node_id in workflow:
-                    workflow[node_id]["inputs"]["image1"] = ["7", 0]
+                    workflow[node_id]["inputs"]["image1"] = ["70", 0]
 
     if image_b64_2:
-        fname2 = upload_image_to_comfyui(image_b64_2)
+        fname2, w2, h2 = upload_image_to_comfyui(image_b64_2)
         if fname2:
             input_filenames.append(fname2)
             if "8" not in workflow:
                 workflow["8"] = {"class_type": "LoadImage", "inputs": {"image": fname2}}
             else:
                 workflow["8"]["inputs"]["image"] = fname2
+            # Add padding node to make input square (1024x1024)
+            workflow["71"] = {
+                "class_type": "ResizeAndPadImage",
+                "inputs": {"image": ["8", 0], "target_width": target_size,
+                            "target_height": target_size, "padding_color": "black",
+                            "interpolation": "lanczos"}
+            }
             for node_id in ("3", "4"):
                 if node_id in workflow:
-                    workflow[node_id]["inputs"]["image2"] = ["8", 0]
+                    workflow[node_id]["inputs"]["image2"] = ["71", 0]
+
+    # Add output crop/resize node to align output with input resolution
+    # Detect workflow type: face swap (SamplerCustomAdvanced) vs regular (KSampler)
+    is_face_swap = "465" in workflow  # SamplerCustomAdvanced node ID
+    print(f"[WORKFLOW] is_face_swap={is_face_swap}, orig={orig_width}x{orig_height}")
+    
+    if (orig_width != 1024 or orig_height != 1024):
+        # Find the SaveImage node and add crop/resize before it
+        for nid in list(workflow.keys()):
+            if workflow[nid].get("class_type") == "SaveImage":
+                # Get the input image node
+                img_src = workflow[nid]["inputs"].get("images", ["5", 0])
+                
+                # Use ImageScale with crop="center" to crop the 1024x1024 output
+                # to match the original aspect ratio, then scale to original dimensions
+                # This removes the black padding bars and restores the original aspect ratio
+                workflow["90"] = {
+                    "class_type": "ImageScale",
+                    "inputs": {"image": img_src, "upscale_method": "lanczos",
+                                "width": orig_width, "height": orig_height, "crop": "center"}
+                }
+                workflow[nid]["inputs"]["images"] = ["90", 0]
+                print(f"[CROP] Output cropped to {orig_width}x{orig_height}")
+                break
 
     if not input_filenames:
         _finalize_job(job_id, client_id, ip, entry['prompt'], neg_prompt,
@@ -605,49 +647,102 @@ def cleanup_loop():
 # ===================================================================
 
 def build_workflow(input_image_names, prompt, negative_prompt, num_steps, guidance,
-                   cfg_scale, seed, num_images, use_lightning=True):
+                   cfg_scale, seed, num_images, use_lightning=True, use_face_swap=False):
     """Build ComfyUI workflow for Qwen-Rapid-AIO (single checkpoint, 2 image inputs).
     
     input_image_names: list of uploaded image filenames (1 or 2 images)
+    use_face_swap: if True, use BFS Head V5 LoRA for face/head swapping
     """
-    if use_lightning:
+    if use_face_swap:
+        # Face swap uses its own settings (euler/simple, cfg=2.5, steps=20)
+        return _build_face_swap_workflow(input_image_names, prompt, negative_prompt,
+                                         num_steps, guidance, cfg_scale, seed, num_images)
+
+    # Lightning mode sets defaults, but user can override
+    # Only apply defaults if user hasn't changed the values
+    if use_lightning and num_steps == 20 and cfg_scale == 4.0:
+        # User hasn't changed settings, apply lightning defaults
         num_steps = 4
         cfg_scale = 1.0
+    print(f"[BUILD_WORKFLOW] use_lightning={use_lightning}, num_steps={num_steps}, cfg_scale={cfg_scale}")
 
-    # CheckpointLoaderSimple loads the AIO model (MODEL + CLIP + VAE in one file)
-    workflow = {
-        "1": {
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": "Qwen-Rapid-AIO-NSFW-v19.safetensors"}
-        },
-    }
+    if use_lightning:
+        # Lightning: use AIO checkpoint with Lightning LoRA baked in
+        workflow = {
+            "1": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": "Qwen-Rapid-AIO-NSFW-v19.safetensors"}
+            },
+        }
+    else:
+        # Base workflow: separate UNET + CLIP + VAE (no Lightning LoRA)
+        workflow = {
+            "1": {
+                "class_type": "UNETLoader",
+                "inputs": {"unet_name": "qwen_image_edit_2511_fp8_e4m3fn.safetensors"}
+            },
+            "20": {
+                "class_type": "DualCLIPLoader",
+                "inputs": {
+                    "clip_name1": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                    "clip_name2": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                    "type": "qwen_image_edit"
+                }
+            },
+            "21": {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": "qwen_image_vae.safetensors"}
+            },
+        }
 
     # Load up to 2 input images
     img1_name = input_image_names[0] if len(input_image_names) > 0 else ""
     img2_name = input_image_names[1] if len(input_image_names) > 1 else ""
+
+    target_size = 1024  # Qwen Image Edit prefers square inputs
+    padded_img1_node = "70"  # node ID for padded image 1
+    padded_img2_node = "71"  # node ID for padded image 2
 
     if img1_name:
         workflow["7"] = {
             "class_type": "LoadImage",
             "inputs": {"image": img1_name}
         }
+        # Pad image 1 to square (preserves aspect ratio with black padding)
+        workflow["70"] = {
+            "class_type": "ResizeAndPadImage",
+            "inputs": {"image": ["7", 0], "target_width": target_size,
+                        "target_height": target_size, "padding_color": "black",
+                        "interpolation": "lanczos"}
+        }
     if img2_name:
         workflow["8"] = {
             "class_type": "LoadImage",
             "inputs": {"image": img2_name}
         }
+        # Pad image 2 to square (preserves aspect ratio with black padding)
+        workflow["71"] = {
+            "class_type": "ResizeAndPadImage",
+            "inputs": {"image": ["8", 0], "target_width": target_size,
+                        "target_height": target_size, "padding_color": "black",
+                        "interpolation": "lanczos"}
+        }
 
-    # Build image references for TextEncodeQwenImageEditPlus
+    # Build image references for TextEncodeQwenImageEditPlus (use padded images)
     # image1 and image2 are optional — only include if images were uploaded
-    pos_inputs = {"prompt": prompt, "clip": ["1", 1], "vae": ["1", 2]}
-    neg_inputs = {"prompt": negative_prompt, "clip": ["1", 1], "vae": ["1", 2]}
+    if use_lightning:
+        pos_inputs = {"prompt": prompt, "clip": ["1", 1], "vae": ["1", 2]}
+        neg_inputs = {"prompt": negative_prompt, "clip": ["1", 1], "vae": ["1", 2]}
+    else:
+        pos_inputs = {"prompt": prompt, "clip": ["20", 0], "vae": ["21", 0]}
+        neg_inputs = {"prompt": negative_prompt, "clip": ["20", 0], "vae": ["21", 0]}
 
     if img1_name:
-        pos_inputs["image1"] = ["7", 0]
-        neg_inputs["image1"] = ["7", 0]
+        pos_inputs["image1"] = [padded_img1_node, 0]
+        neg_inputs["image1"] = [padded_img1_node, 0]
     if img2_name:
-        pos_inputs["image2"] = ["8", 0]
-        neg_inputs["image2"] = ["8", 0]
+        pos_inputs["image2"] = [padded_img2_node, 0]
+        neg_inputs["image2"] = [padded_img2_node, 0]
 
     # Positive conditioning (with prompt + images)
     workflow["3"] = {
@@ -660,18 +755,29 @@ def build_workflow(input_image_names, prompt, negative_prompt, num_steps, guidan
         "inputs": neg_inputs
     }
 
-    # Empty latent (768x768) — output resolution
+    # Empty latent (1024x1024) — square output resolution for Qwen Image Edit
     workflow["9"] = {
         "class_type": "EmptyLatentImage",
-        "inputs": {"width": 768, "height": 768, "batch_size": num_images}
+        "inputs": {"width": target_size, "height": target_size, "batch_size": num_images}
     }
 
-    # KSampler with sa_solver + beta scheduler (Qwen-Rapid-AIO defaults)
+    # KSampler with appropriate sampler/scheduler based on steps
+    # Lightning checkpoint (4 steps, cfg=1.0) → sa_solver + beta
+    # Base model (20+ steps, cfg=4.0) → euler + simple
+    if num_steps <= 4 and cfg_scale <= 1.0:
+        # Lightning mode
+        sampler_name = "sa_solver"
+        scheduler = "beta"
+    else:
+        # Base model mode
+        sampler_name = "euler"
+        scheduler = "simple"
+
     workflow["2"] = {
         "class_type": "KSampler",
         "inputs": {
             "seed": seed, "steps": num_steps, "cfg": cfg_scale,
-            "sampler_name": "sa_solver", "scheduler": "beta", "denoise": 1.0,
+            "sampler_name": sampler_name, "scheduler": scheduler, "denoise": 1.0,
             "model": ["1", 0], "positive": ["3", 0], "negative": ["4", 0],
             "latent_image": ["9", 0],
         }
@@ -680,10 +786,10 @@ def build_workflow(input_image_names, prompt, negative_prompt, num_steps, guidan
     # Decode latent → image
     workflow["5"] = {
         "class_type": "VAEDecode",
-        "inputs": {"samples": ["2", 0], "vae": ["1", 2]}
+        "inputs": {"samples": ["2", 0], "vae": ["1", 2] if use_lightning else ["21", 0]}
     }
 
-    # Save output
+    # Save output (cropping to original resolution is added dynamically in _run_single_job)
     workflow["6"] = {
         "class_type": "SaveImage",
         "inputs": {"images": ["5", 0], "filename_prefix": "qwen_rapid_edit"}
@@ -692,9 +798,189 @@ def build_workflow(input_image_names, prompt, negative_prompt, num_steps, guidan
     return workflow
 
 
+def _build_face_swap_workflow(input_image_names, prompt, negative_prompt, num_steps, guidance,
+                               cfg_scale, seed, num_images):
+    """Build workflow for BFS Head V5 face swap.
+    
+    Uses separate UNET/CLIP/VAE loaders + BFS LoRA + ModelSamplingAuraFlow + CFGNorm.
+    SamplerCustomAdvanced + CFGGuider + BasicScheduler (matches original BFS workflow).
+    Image 1 = Body (reference), Image 2 = Face (source).
+    """
+    workflow = {
+        # Load separate components (needed for LoRA)
+        "37": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": "qwen_image_edit_2511_fp8_e4m3fn.safetensors",
+                        "weight_dtype": "fp8_e4m3fn"}
+        },
+        "38": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                        "type": "qwen_image", "device": "default"}
+        },
+        "39": {
+            "class_type": "VAELoader",
+            "inputs": {"vae_name": "qwen_image_vae.safetensors"}
+        },
+    }
+
+    # Load images (Image 1 = Body, Image 2 = Face for V3/V4/V5)
+    img1_name = input_image_names[0] if len(input_image_names) > 0 else ""
+    img2_name = input_image_names[1] if len(input_image_names) > 1 else ""
+
+    body_img_node = "69"  # node ID for processed (padded) body image
+    face_img_node = "71"  # node ID for processed (padded) face image
+    target_size = 1024  # Qwen Image Edit prefers square inputs
+
+    if img1_name:
+        workflow["78"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": img1_name}
+        }
+        # Pad body image to 1024x1024 (preserves aspect ratio with black padding)
+        workflow["69"] = {
+            "class_type": "ResizeAndPadImage",
+            "inputs": {"image": ["78", 0], "target_width": target_size,
+                        "target_height": target_size, "padding_color": "black",
+                        "interpolation": "lanczos"}
+        }
+    if img2_name:
+        workflow["79"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": img2_name}
+        }
+        # Pad face image to 1024x1024 (preserves aspect ratio with black padding)
+        workflow["71"] = {
+            "class_type": "ResizeAndPadImage",
+            "inputs": {"image": ["79", 0], "target_width": target_size,
+                        "target_height": target_size, "padding_color": "black",
+                        "interpolation": "lanczos"}
+        }
+
+    # Load BFS Head V5 LoRA
+    workflow["482"] = {
+        "class_type": "LoraLoaderModelOnly",
+        "inputs": {"model": ["37", 0],
+                    "lora_name": "bfs_head_v5_2511_merged_version_rank_16_fp16.safetensors",
+                    "strength_model": 1.0}
+    }
+
+    # ModelSamplingAuraFlow (shift=1 for head swap)
+    workflow["66"] = {
+        "class_type": "ModelSamplingAuraFlow",
+        "inputs": {"shift": 1.0, "model": ["482", 0]}
+    }
+
+    # CFGNorm
+    workflow["75"] = {
+        "class_type": "CFGNorm",
+        "inputs": {"strength": 1, "model": ["66", 0]}
+    }
+
+    # Encode body image to latent (matches original workflow)
+    if img1_name:
+        workflow["88"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": [body_img_node, 0], "vae": ["39", 0]}
+        }
+        latent_ref = ["88", 0]
+    else:
+        # Fallback to empty latent if no body image
+        workflow["9"] = {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": 1024, "height": 1024, "batch_size": num_images}
+        }
+        latent_ref = ["9", 0]
+
+    # Build conditioning with body + face images
+    pos_inputs = {"prompt": prompt, "clip": ["38", 0], "vae": ["39", 0]}
+    neg_inputs = {"prompt": negative_prompt, "clip": ["38", 0], "vae": ["39", 0]}
+
+    if img1_name:
+        pos_inputs["image1"] = [body_img_node, 0]
+        neg_inputs["image1"] = [body_img_node, 0]
+    if img2_name:
+        pos_inputs["image2"] = [face_img_node, 0]
+        neg_inputs["image2"] = [face_img_node, 0]
+
+    # Positive conditioning
+    workflow["111"] = {
+        "class_type": "TextEncodeQwenImageEditPlus",
+        "inputs": pos_inputs
+    }
+    # Negative conditioning
+    workflow["473"] = {
+        "class_type": "TextEncodeQwenImageEditPlus",
+        "inputs": neg_inputs
+    }
+
+    # FluxKontextMultiReferenceLatentMethod for positive conditioning
+    workflow["459"] = {
+        "class_type": "FluxKontextMultiReferenceLatentMethod",
+        "inputs": {"conditioning": ["111", 0], "reference_latents_method": "offset"}
+    }
+    # FluxKontextMultiReferenceLatentMethod for negative conditioning
+    workflow["460"] = {
+        "class_type": "FluxKontextMultiReferenceLatentMethod",
+        "inputs": {"conditioning": ["473", 0], "reference_latents_method": "offset"}
+    }
+
+    # Sampler setup (matches original BFS workflow)
+    # RandomNoise
+    workflow["474"] = {
+        "class_type": "RandomNoise",
+        "inputs": {"noise_seed": seed}
+    }
+    # BasicScheduler (karras matches original BFS workflow)
+    workflow["475"] = {
+        "class_type": "BasicScheduler",
+        "inputs": {"model": ["75", 0], "steps": num_steps, "scheduler": "karras", "denoise": 1.0}
+    }
+    # CFGGuider (uses FluxKontext-wrapped conditioning)
+    workflow["467"] = {
+        "class_type": "CFGGuider",
+        "inputs": {"model": ["75", 0], "positive": ["459", 0], "negative": ["460", 0],
+                    "cfg": cfg_scale}
+    }
+    # SamplerCustomAdvanced (replaces KSampler)
+    workflow["465"] = {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {"noise": ["474", 0], "guider": ["467", 0], "sampler": ["468", 0],
+                    "sigmas": ["475", 0], "latent_image": latent_ref}
+    }
+    # KSamplerSelect (euler)
+    workflow["468"] = {
+        "class_type": "KSamplerSelect",
+        "inputs": {"sampler_name": "euler"}
+    }
+
+    # Decode latent → image
+    workflow["8"] = {
+        "class_type": "VAEDecode",
+        "inputs": {"samples": ["465", 0], "vae": ["39", 0]}
+    }
+
+    # Save output (resize to match input resolution is added dynamically in _run_single_job)
+    workflow["60"] = {
+        "class_type": "SaveImage",
+        "inputs": {"images": ["8", 0], "filename_prefix": "qwen_rapid_headswap"}
+    }
+
+    return workflow
+
+
 def upload_image_to_comfyui(image_b64):
     img_data = base64.b64decode(image_b64)
     filename = f"input_{uuid.uuid4().hex[:8]}.png"
+
+    # Get image dimensions from base64 data
+    try:
+        from io import BytesIO
+        from PIL import Image
+        img = Image.open(BytesIO(img_data))
+        img_width, img_height = img.size
+    except Exception:
+        img_width, img_height = 1024, 1024  # fallback
 
     boundary = uuid.uuid4().hex
     body = (
@@ -717,11 +1003,11 @@ def upload_image_to_comfyui(image_b64):
     try:
         with urllib.request.urlopen(upload_req, timeout=30) as resp:
             result = json.loads(resp.read())
-            print(f"[UPLOAD] {filename} -> {result}")
-            return filename
+            print(f"[UPLOAD] {filename} ({img_width}x{img_height}) -> {result}")
+            return filename, img_width, img_height
     except Exception as e:
         print(f"[UPLOAD] Error: {e}")
-        return None
+        return None, img_width, img_height
 
 
 def run_comfyui_workflow(workflow, client_id):
@@ -741,7 +1027,15 @@ def run_comfyui_workflow(workflow, client_id):
     ws.settimeout(5.0)
 
     output_images = []
-    total_steps = workflow.get("2", {}).get("inputs", {}).get("steps", 4)
+    # Find sampler node (KSampler=2 or SamplerCustomAdvanced=465/477)
+    sampler_node = None
+    for nid in ("2", "465", "477"):
+        if nid in workflow:
+            sampler_node = nid
+            break
+    if not sampler_node:
+        sampler_node = "2"  # fallback
+    total_steps = workflow.get(sampler_node, {}).get("inputs", {}).get("steps", 4)
     sampling_done = False
 
     job_progress[client_id] = {
@@ -774,7 +1068,7 @@ def run_comfyui_workflow(workflow, client_id):
                 if msg_type == "progress_state":
                     nodes = data.get("nodes", {})
                     for nid, nstate in nodes.items():
-                        if nid == "2":  # KSampler
+                        if nid == sampler_node:  # KSampler or SamplerCustomAdvanced
                             value = int(nstate.get("value", 0))
                             max_val = int(nstate.get("max", total_steps))
                             pct = round(value / max_val * 100, 1) if max_val > 0 else 0
@@ -791,7 +1085,7 @@ def run_comfyui_workflow(workflow, client_id):
                             job_progress[client_id].update({
                                 "status": "running", "message": f"Running node {nid}..."
                             })
-                        elif nstate.get("state") == "finished" and nid == "6":  # SaveImage
+                        elif nstate.get("state") == "finished" and nid in ("6", "60"):  # SaveImage
                             job_progress[client_id].update({
                                 "status": "saving", "message": "Saving result...", "percent": 100
                             })
@@ -802,10 +1096,10 @@ def run_comfyui_workflow(workflow, client_id):
                     if node_id is None and stage == "complete":
                         time.sleep(2)
                         break
-                    elif stage == "executed" and node_id == "6":  # SaveImage
+                    elif stage == "executed" and node_id in ("6", "60"):  # SaveImage
                         time.sleep(2)
                         break
-                    elif node_id == "2":  # KSampler
+                    elif node_id == sampler_node:  # KSampler or SamplerCustomAdvanced
                         job_progress[client_id].update({
                             "status": "sampling", "message": "Sampling started...",
                             "step": 0, "total": total_steps,
@@ -1154,6 +1448,8 @@ def edit_image():
         num_images = int(data.get("num_images", 1))
         ul = data.get("use_lightning", "true")
         use_lightning = ul if isinstance(ul, bool) else str(ul).lower() == "true"
+        fs = data.get("use_face_swap", "false")
+        use_face_swap = fs if isinstance(fs, bool) else str(fs).lower() == "true"
     except (ValueError, TypeError):
         num_inference_steps = 20
         guidance_scale = 1.0
@@ -1161,6 +1457,7 @@ def edit_image():
         seed = 42
         num_images = 1
         use_lightning = True
+        use_face_swap = False
 
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
@@ -1213,11 +1510,24 @@ def edit_image():
     job_id = str(uuid.uuid4())[:8]
     client_id = str(uuid.uuid4())
 
+    # Auto-set head swap prompt if face swap mode is enabled
+    if use_face_swap and not prompt:
+        prompt = ("head_swap: start with Picture 1 as the base image, keeping its lighting, "
+                  "environment, and background. remove the head from Picture 1 completely and "
+                  "replace it with the head from Picture 2, strictly preserving the hair, eye "
+                  "color, nose structure of Picture 2. copy the direction of the eye, head "
+                  "rotation, micro expressions from Picture 1, high quality, sharp details, 4k")
+    if use_face_swap and not negative_prompt.strip():
+        negative_prompt = ("bad quality, noise, blurry, worst quality, low resolution, blur, "
+                           "distortion, unnatural blending, cartoon, illustration, painting")
+
+    print(f"[EDIT] use_face_swap={use_face_swap}, use_lightning={use_lightning}, steps={num_inference_steps}, guidance={guidance_scale}, cfg={true_cfg_scale}, seed={seed}, num_images={num_images}")
     workflow = build_workflow(
         [], prompt, negative_prompt,
         num_inference_steps, guidance_scale, true_cfg_scale, seed, num_images,
-        use_lightning,
+        use_lightning, use_face_swap,
     )
+    print(f"[EDIT] Workflow nodes: {sorted(workflow.keys())}")
 
     pos = enqueue_job(client_ip, client_id, job_id, prompt, workflow, image_b64_1, image_b64_2)
     snap = get_queue_snapshot(client_ip)
