@@ -4,8 +4,8 @@ A web-based image editing interface powered by ComfyUI, supporting multiple Qwen
 
 | Branch | Model | Description |
 |--------|-------|-------------|
-| `main` | Qwen-Image-Edit-2511 (FP8) | Standard uncensored image edit with Lightning 4-step LoRA |
-| `uncensored` | Qwen-Rapid-AIO-NSFW-v19 | All-in-one checkpoint with 2-image multi-conditioning |
+| `main` | Qwen-Image-Edit-2511 (FP8) | Standard image edit with Lightning 4-step LoRA |
+| `uncensored` | Qwen-Rapid-AIO-NSFW-v19 + Qwen-Image-Edit-2511 (FP8) | Uncensored AIO checkpoint (Lightning) + base model (20-step) with 2-image multi-conditioning |
 
 ## Features
 
@@ -77,24 +77,37 @@ Standard image editing with separate model components:
 
 **Workflow:** UNETLoader → CLIPLoader → VAELoader → LoadImage → ImageScaleToTotalPixels → VAEEncode → TextEncodeQwenImageEditPlus × 2 → LoraLoaderModelOnly → ModelSamplingAuraFlow → CFGNorm → KSampler (euler/simple) → VAEDecode → SaveImage
 
-### `uncensored` — Qwen-Rapid-AIO-NSFW-v19
+### `uncensored` — Qwen-Rapid-AIO-NSFW-v19 + Qwen-Image-Edit-2511 (FP8)
 
-All-in-one checkpoint with multi-image conditioning:
+Dual-mode workflow with Lightning (AIO) and Base (separate models) support:
+
+**Lightning Mode (⚡ ON):**
 
 | Component | File | Size |
 |-----------|------|------|
 | AIO Checkpoint | `Qwen-Rapid-AIO-NSFW-v19.safetensors` | ~27 GB |
 
-**VRAM Usage:** ~20-25 GB (RTX 5090 32GB recommended)
+**Workflow:** CheckpointLoaderSimple → LoadImage × 2 → ResizeAndPadImage (1024×1024) → TextEncodeQwenImageEditPlus × 2 (with image1/image2 conditioning) → EmptyLatentImage (1024×1024) → KSampler (sa_solver/beta, 4 steps, cfg=1.0) → VAEDecode → ImageScale (crop to original aspect ratio) → SaveImage
 
-**Workflow:** CheckpointLoaderSimple → LoadImage × 2 → TextEncodeQwenImageEditPlus × 2 (with image1/image2 conditioning) → EmptyLatentImage (768×768) → KSampler (sa_solver/beta) → VAEDecode → SaveImage
+**Base Mode (⚡ OFF):**
+
+| Component | File | Size |
+|-----------|------|------|
+| UNET | `qwen_image_edit_2511_fp8_e4m3fn.safetensors` | ~12 GB |
+| CLIP | `qwen_2.5_vl_7b_fp8_scaled.safetensors` | ~8.8 GB |
+| VAE | `qwen_image_vae.safetensors` | ~243 MB |
+
+**Workflow:** UNETLoader → CLIPLoader → VAELoader → LoadImage → ImageScaleToTotalPixels (1.0 MP) → VAEEncode → TextEncodeQwenImageEditPlus × 2 (with image1/image2 conditioning) → ModelSamplingAuraFlow (shift=3) → CFGNorm (strength=1) → KSampler (euler/simple, 20 steps, cfg=4.0) → VAEDecode → SaveImage
 
 **Key Differences from `main`:**
-- Single AIO checkpoint (no separate UNET/CLIP/VAE files)
+- **Dual-mode**: Lightning (AIO checkpoint, 4-step, uncensored) or Base (separate models, 20-step, standard)
 - Supports **up to 2 input images** for multi-conditioning
-- Uses `sa_solver` + `beta` scheduler (faster convergence)
-- `EmptyLatentImage` instead of `VAEEncode` (text-to-image generation with image conditioning)
-- No Lightning LoRA or ModelSamplingAuraFlow nodes
+- **Input padding**: Images padded to 1024×1024 square (Lightning mode) for consistent generation
+- **Output alignment**: Output cropped to match original input aspect ratio (Lightning mode)
+- **Prompt Guide**: Collapsible panel with categorized prompt keywords (consistency, quality, identity, text, objects, lighting, negatives)
+- **Face Swap**: BFS Head V5 integration with 2-image input (Image 1 = Body, Image 2 = Face)
+- **i18n**: Full English/Chinese support with localized prompt guide
+- **HTTPS**: Auto-detected SSL certificates for microphone/STT access
 
 ## Architecture
 
