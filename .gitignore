@@ -1,0 +1,31 @@
+# Virtual environment
+venv/
+.venv/
+
+# Output files
+outputs/
+
+# History files (JSON thumbnails)
+history/*.json
+history/*.png
+
+# Archive (permanent backup of all completed jobs)
+archive/
+
+# SQLite database
+history.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
